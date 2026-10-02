@@ -1,11 +1,17 @@
 [ECHONETLite Platform Custom Component for Home Assistant](https://github.com/scottyphillips/echonetlite_homeassistant)を快適エアリーに対応させようとしている途中です。
+
 ※現段階では主な値が取れるだけで、入力はあまりできません。
 
+
 custom_components/echonetlite/quirks/Chofu Seisakusho/MC-38/0130.py
+
 このファイルを同じディレクトリ構造で入れたら動くと思います。
+
 もし、機器名（MC-38）が異なる場合はディレクトリ名を変更してください。
 
+
 なお、制作に当たり、[ECHONETLite Custom MRA](https://github.com/hiroaki0923/ECHONETLite-Custom-MRA)を参考にさせていただきました。
+
 多謝。
 
 
