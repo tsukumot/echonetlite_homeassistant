@@ -1,3 +1,4 @@
+#快適エアリー
 #_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.components.sensor.const import (
