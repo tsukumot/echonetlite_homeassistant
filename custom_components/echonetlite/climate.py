@@ -69,11 +69,21 @@ ATTR_HUMIDITY = "humidity"
 async def async_setup_entry(hass, config_entry, async_add_devices):
     """Set up entry."""
     entities = []
+    from .climate_KAITEKI import create_kaiteki_climate_entities
+
     for entity in hass.data[DOMAIN][config_entry.entry_id]:
         if (
             entity["instance"]["eojgc"] == 0x01 and entity["instance"]["eojcc"] == 0x30
         ):  # Home Air Conditioner
-            entities.append(EchonetClimate(entity["echonetlite"], config_entry))
+            coordinator = entity["echonetlite"]
+            f2 = coordinator.data.get(0xF2)
+
+            if isinstance(f2, dict) and f2.get("zoneGrouping") in range(0x30, 0x35):
+                entities.extend(
+                    create_kaiteki_climate_entities(coordinator, config_entry)
+                )
+            else:
+                entities.append(EchonetClimate(coordinator, config_entry))
     async_add_devices(entities, True)
 
     platform = entity_platform.async_get_current_platform()
@@ -278,6 +288,220 @@ class EchonetClimate(EchonetEntity, ClimateEntity):
             self, "_attr_swing_horizontal_modes", []
         ):
             return self.coordinator.data.get(ENL_SWING_MODE)
+        else:
+            if ENL_AIR_HORZ in self.coordinator.data:
+                return self.coordinator.data[ENL_AIR_HORZ]
+            return None
+
+    @property
+    def min_temp(self) -> float:
+        """Return the minimum temperature based on current operation mode."""
+        mode = self.hvac_mode
+
+        if mode == HVACMode.HEAT:
+            return self.coordinator._user_options.get("min_temp_heat", 16)
+        if mode == HVACMode.COOL:
+            return self.coordinator._user_options.get("min_temp_cool", 18)
+
+        # Default/Auto (HEAT_COOL), DRY, FAN_ONLY, OFF ranges
+        return self.coordinator._user_options.get("min_temp_auto", 16)
+
+    @property
+    def max_temp(self) -> float:
+        """Return the maximum temperature based on current operation mode."""
+        mode = self.hvac_mode
+
+        if mode == HVACMode.HEAT:
+            return self.coordinator._user_options.get("max_temp_heat", 30)
+        if mode == HVACMode.COOL:
+            return self.coordinator._user_options.get("max_temp_cool", 27)
+
+        # Default/Auto (HEAT_COOL), DRY, FAN_ONLY, OFF ranges
+        return self.coordinator._user_options.get("max_temp_auto", 30)
+
+    def _set_attrs(self):
+        """Update internal state.
+
+        Note: All climate attributes including min/max temperature are now @property
+        getters that compute values on demand based on current hvac_mode.
+        This method is kept for backward compatibility and to handle side effects like
+        updating _last_mode.
+        """
+        # Update _last_mode based on current hvac mode
+        if self.coordinator.data[ENL_STATUS] == DATA_STATE_ON:
+            mode = self.coordinator.data.get(ENL_HVAC_MODE)
+            if mode and mode not in ("auto", "other"):
+                self._last_mode = mode
+
+    async def async_set_fan_mode(self, fan_mode):
+        """Set new fan mode with snappy verification."""
+        await self.coordinator.async_set_and_verify(
+            [0xA0], self.coordinator._instance.setFanSpeed(fan_mode)
+        )
+
+    async def async_set_preset_mode(self, preset_mode):
+        """Set new preset mode - This is normal/high-speed/silent"""
+        # Assuming 0xB2 is the EPC for Silent/Preset mode
+        await self.coordinator.async_set_and_verify(
+            [0xB2], self.coordinator._instance.setSilentMode(preset_mode)
+        )
+
+    async def async_set_swing_mode(self, swing_mode):
+        """Set new swing mode with snappy verification."""
+        # 1. Determine which EPC we are actually targeting
+        if swing_mode in self._opc_data[ENL_AUTO_DIRECTION]:
+            epc, coro = ENL_AUTO_DIRECTION, self.coordinator._instance.setAutoDirection(
+                swing_mode
+            )
+        elif swing_mode in self._opc_data[ENL_SWING_MODE]:
+            epc, coro = ENL_SWING_MODE, self.coordinator._instance.setSwingMode(
+                swing_mode
+            )
+        else:
+            epc, coro = ENL_AIR_VERT, self.coordinator._instance.setAirflowVert(
+                swing_mode
+            )
+
+        # 2. Use the helper for the optimistic update and targeted poll
+        await self.coordinator.async_set_and_verify([epc], coro)
+
+    async def async_set_swing_horizontal_mode(self, swing_horizontal_mode):
+        """Set new horizontal swing mode with snappy verification."""
+        if swing_horizontal_mode in self._opc_data[ENL_AUTO_DIRECTION]:
+            epc, coro = ENL_AUTO_DIRECTION, self.coordinator._instance.setAutoDirection(
+                swing_horizontal_mode
+            )
+        elif swing_horizontal_mode in self._opc_data[ENL_SWING_MODE]:
+            epc, coro = ENL_SWING_MODE, self.coordinator._instance.setSwingMode(
+                swing_horizontal_mode
+            )
+        else:
+            epc, coro = ENL_AIR_HORZ, self.coordinator._instance.setAirflowHoriz(
+                swing_horizontal_mode
+            )
+
+        await self.coordinator.async_set_and_verify([epc], coro)
+
+    async def async_set_temperature(self, **kwargs):
+        """Set new target temperatures with snappy verification."""
+        # 1. Handle HVAC Mode change if present
+        hvac_mode = kwargs.get(ATTR_HVAC_MODE)
+        if hvac_mode is not None:
+            # This will trigger its own async_set_and_verify within async_set_hvac_mode
+            await self.async_set_hvac_mode(hvac_mode)
+
+        # 2. Handle Temperature change
+        temp_val = kwargs.get(ATTR_TEMPERATURE)
+        if temp_val is not None:
+            settemp = self._normalize_settemp(temp_val)
+            # Use the helper for the temp EPC (usually 0xB3)
+            await self.coordinator.async_set_and_verify(
+                [ENL_HVAC_SET_TEMP],  # Replace with your actual EPC constant
+                self.coordinator._instance.setOperationalTemperature(settemp),
+            )
+
+    async def async_set_humidity(self, humidity: int) -> None:
+        """Set new target humidity."""
+        # Use the helper for the humidity EPC (usually 0xB4)
+        await self.coordinator.async_set_and_verify(
+            [ENL_HVAC_SET_HUMIDITY],  # Replace with your actual EPC constant
+            self.coordinator._instance.setOperationalHumidity(humidity),
+        )
+
+    async def async_set_hvac_mode(self, hvac_mode):
+        """Set new operation mode with dual-EPC verification."""
+        target_mode = "auto" if hvac_mode == "heat_cool" else hvac_mode
+
+        # We update both Power (0x80) and Mode (0xB0)
+        # because 'off' changes 0x80, and 'heat' changes both.
+        await self.coordinator.async_set_and_verify(
+            [0x80, 0xB0], self.coordinator._instance.setMode(target_mode)
+        )
+
+    async def async_turn_on(self):
+        """Turn on with snappy verification."""
+        # We target 0x80 (Power) and 0xB0 (Mode) to ensure
+        # the UI lights up both the power toggle and the mode icon.
+        await self.coordinator.async_set_and_verify(
+            [0x80, 0xB0],  # Or the appropriate internal state for 'on'
+            self.coordinator._instance.on(),
+        )
+
+    async def async_turn_off(self):
+        """Turn off with snappy verification."""
+        await self.coordinator.async_set_and_verify(
+            [0x80, 0xB0], self.coordinator._instance.off()
+        )
+
+    async def async_set_humidifier_during_heater(self, state, humidity):
+        """Handle boost heating service call."""
+        await self.coordinator._instance.setHeaterHumidifier(state, humidity)
+
+    async def async_added_to_hass(self):
+        """Register callbacks."""
+        await super().async_added_to_hass()
+        self.coordinator.add_update_option_listener(self.update_option_listener)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        _LOGGER.debug(
+            f"Coordinator update callback triggered for {self._device_name} with data: {self.coordinator.data}"
+        )
+        # We update the local attributes from the central data.
+        self._set_attrs()
+
+        # We use the Coordinator's availability status.
+        self._attr_available = self.coordinator.last_update_success
+
+        # Inform HA that the state needs writing to the UI.
+        self.async_write_ha_state()
+
+    def update_option_listener(self):
+        """Update list of available fan and swing modes from options."""
+
+        """list of available fan modes."""
+        _modes = self.coordinator._user_options.get(ENL_FANSPEED)
+        if _modes:
+            self._attr_fan_modes = _modes
+        else:
+            self._attr_fan_modes = DEFAULT_FAN_MODES
+
+        """list of available swing modes (vertical)."""
+        _modes = self.coordinator._user_options.get(OPTION_HA_UI_SWING)
+        if _modes and len(_modes):
+            # This option is only populated once the user has opened the
+            # integration options and submitted the form at least once - it
+            # is empty on a fresh config entry. When it IS present (e.g. an
+            # existing setup that already configured it), it takes priority
+            # over the per-EPC option and the derived list below so that
+            # setup isn't changed out from under the user.
+            self._attr_swing_modes = list(_modes)
+        else:
+            _modes = self.coordinator._user_options.get(ENL_AIR_VERT)
+            if _modes:
+                self._attr_swing_modes = list(_modes)
+            else:
+                # Derive from the device's SET map as a union of whichever
+                # of 0xA1/0xA3/0xA4 are actually settable, rather than
+                # assuming 0xA4 (+0xA1) are present.
+                _derived = []
+                if self.is_settable(ENL_AIR_VERT):
+                    _derived.extend(AIRFLOW_VERT.keys())
+                if self.is_settable(ENL_AUTO_DIRECTION):
+                    if "auto-vert" not in _derived:
+                        _derived.insert(0, "auto-vert")
+                if self.is_settable(ENL_SWING_MODE):
+                    # Per the climate entity docs, a device with no
+                    # independent horizontal control (no 0xA5) needs all
+                    # of 0xA3's values advertised, or "not-used"/"horiz"
+                    # become unreachable via climate.set_swing_mode even
+                    # though the device accepts them. Pull the full set
+                    # from self._opc_data so this list can never drift
+                    # out of sync with what async_set_swing_mode() routes.
+                    #
+                    # But when 0xA4 is ALSO settable, the swing_mode
+                    # property checks 0xf.coordinator.data.get(ENL_SWING_MODE)
         else:
             if ENL_AIR_HORZ in self.coordinator.data:
                 return self.coordinator.data[ENL_AIR_HORZ]
