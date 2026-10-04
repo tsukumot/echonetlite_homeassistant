@@ -1,28 +1,26 @@
-"""KAITEKI climate entity."""
+"""KAITEKI multi-zone climate entities."""
 
-import logging
-
-from homeassistant.components.climate.const import ATTR_HVAC_MODE
+from homeassistant.components.climate.const import (
+    ATTR_HVAC_MODE,
+    ClimateEntityFeature,
+)
 from homeassistant.const import ATTR_TEMPERATURE
 
 from .climate import EchonetClimate
 
-_LOGGER = logging.getLogger(__name__)
 
-
-# 0x30: zone 1 / zone 2 / zone 3
-# 0x31: zone 1+2 / zone 3
-# 0x32: zone 1+3 / zone 2
-# 0x33: zone 1 / zone 2+3
-# 0x34: zone 1+2+3
 ZONE_GROUPINGS = {
+    # 0x30: zone 1 / zone 2 / zone 3
+    # 0x31: zone 1+2 / zone 3
+    # 0x32: zone 1+3 / zone 2
+    # 0x33: zone 1 / zone 2+3
+    # 0x34: zone 1+2+3
     0x30: ((1,), (2,), (3,)),
     0x31: ((1, 2), (3,)),
     0x32: ((1, 3), (2,)),
     0x33: ((1,), (2, 3)),
     0x34: ((1, 2, 3),),
 }
-
 
 STATUS_TO_BYTE = {
     "off": 0x30,
@@ -45,126 +43,113 @@ PROGRAM_OPERATION_TO_BYTE = {
 
 
 class KaitekiZoneGroup:
-    """Manage the climate entities belonging to one KAITEKI device."""
+    """Manage all climate entities belonging to one KAITEKI device."""
 
     def __init__(self, coordinator, grouping):
-        """Initialize the zone group."""
         self.coordinator = coordinator
         self.grouping = grouping
         self.entities = []
 
     def add(self, entity):
-        """Register an entity."""
+        """Register an active HA entity."""
         self.entities.append(entity)
 
-    def get_entity_for_zone(self, zone):
-        """Return the entity responsible for a physical zone."""
+    def _entity_for_zone(self, zone):
+        """Return the active entity covering a physical zone."""
         for entity in self.entities:
             if zone in entity.zones:
                 return entity
-
         return None
 
-    def get_value(self, zone, attribute):
-        """
-        Return a value for a physical zone.
-
-        If the corresponding entity no longer exists, use the first
-        available zone in the order zone 1 -> zone 2 -> zone 3.
-        """
-        entity = self.get_entity_for_zone(zone)
-
+    def _value_for_zone(self, zone, attribute):
+        """Read a value from the zone, falling back 1 -> 2 -> 3."""
+        entity = self._entity_for_zone(zone)
         if entity is not None:
             return getattr(entity, attribute)
 
         for fallback_zone in (1, 2, 3):
-            entity = self.get_entity_for_zone(fallback_zone)
+            entity = self._entity_for_zone(fallback_zone)
             if entity is not None:
                 return getattr(entity, attribute)
 
         return None
 
-    def _current_f1(self):
-        """Return the currently received F1 dictionary."""
+    def _f1_value(self, key):
+        """Return a raw value retained by the F1 decoder."""
         f1 = self.coordinator.data.get(0xF1)
-
         if not isinstance(f1, dict):
-            return {}
+            return None
+        return f1.get(key)
 
-        return f1
+    def _build_f1(self, overrides=None):
+        """Build a complete F1 EDT from current entities plus overrides.
 
-    def _get_unknown(self, zone, index):
-        """Return an unknown F1 byte from the last received value."""
-        key = f"unknown{zone}-{index}"
-        value = self._current_f1().get(key)
-
-        if value is None:
-            return 0
-
-        return value
-
-    def build_f1(self, overrides=None):
-        """
-        Build the complete F1 EDT.
-
-        Values not present in overrides are taken from the current
-        climate entities. Unknown bytes are preserved from the received F1.
+        A value of None in overrides means "keep the current value".
+        Unknown F1 bytes are copied from the last received F1.
         """
         overrides = overrides or {}
-
         data = {}
 
         for zone in (1, 2, 3):
-            data[f"zone{zone}Status"] = self.get_value(
-                zone, "zone_status"
-            )
-            data[f"zone{zone}TargetTemp"] = self.get_value(
-                zone, "target_temperature"
-            )
-            data[f"zone{zone}AirFlow"] = self.get_value(
-                zone, "fan_mode"
-            )
-            data[f"zone{zone}ProgramOperation"] = self.get_value(
-                zone, "zone_program_operation"
-            )
+            for suffix, attribute in (
+                ("Status", "zone_status"),
+                ("TargetTemp", "target_temperature"),
+                ("AirFlow", "fan_mode"),
+                ("ProgramOperation", "zone_program_operation"),
+            ):
+                key = f"zone{zone}{suffix}"
+                value = overrides.get(key)
+                if value is None:
+                    value = self._value_for_zone(zone, attribute)
+                data[key] = value
 
             for index in (1, 2, 3):
-                data[f"unknown{zone}-{index}"] = self._get_unknown(
-                    zone, index
-                )
-
-        data.update(overrides)
+                key = f"unknown{zone}-{index}"
+                value = self._f1_value(key)
+                if value is None:
+                    raise ValueError(f"Current F1 does not contain {key}")
+                data[key] = value
 
         edt = bytearray()
-
         for zone in (1, 2, 3):
             status = data[f"zone{zone}Status"]
             target_temp = data[f"zone{zone}TargetTemp"]
             airflow = data[f"zone{zone}AirFlow"]
             program = data[f"zone{zone}ProgramOperation"]
 
-            edt.append(STATUS_TO_BYTE[status])
-            edt.append(int(target_temp))
-            edt.append(AIRFLOW_TO_BYTE[airflow])
+            if status not in STATUS_TO_BYTE:
+                raise ValueError(f"Unknown zone{zone}Status: {status!r}")
+            if airflow not in AIRFLOW_TO_BYTE:
+                raise ValueError(f"Unknown zone{zone}AirFlow: {airflow!r}")
+            if program not in PROGRAM_OPERATION_TO_BYTE:
+                raise ValueError(
+                    f"Unknown zone{zone}ProgramOperation: {program!r}"
+                )
+            if target_temp is None:
+                raise ValueError(f"Current zone{zone}TargetTemp is unavailable")
 
-            edt.append(data[f"unknown{zone}-1"])
-            edt.append(data[f"unknown{zone}-2"])
-            edt.append(data[f"unknown{zone}-3"])
-
-            edt.append(PROGRAM_OPERATION_TO_BYTE[program])
+            edt.extend(
+                (
+                    STATUS_TO_BYTE[status],
+                    int(target_temp),
+                    AIRFLOW_TO_BYTE[airflow],
+                    data[f"unknown{zone}-1"],
+                    data[f"unknown{zone}-2"],
+                    data[f"unknown{zone}-3"],
+                    PROGRAM_OPERATION_TO_BYTE[program],
+                )
+            )
 
         return bytes(edt)
 
     async def async_set_f1(self, overrides=None):
-        """Send a complete F1 SET."""
-        edt = self.build_f1(overrides)
-
+        """Send the complete F1 value and verify it with a targeted poll."""
+        edt = self._build_f1(overrides)
         mes = {
             "EPC": 0xF1,
             "PDC": len(edt),
             "EDT": edt,
         }
-
         await self.coordinator.async_set_and_verify(
             [0xF1],
             self.coordinator._instance.setMessages([mes]),
@@ -172,113 +157,137 @@ class KaitekiZoneGroup:
 
 
 class EchonetKaitekiClimate(EchonetClimate):
-    """Representation of a KAITEKI climate zone/group."""
+    """Climate entity representing one KAITEKI zone group."""
 
     def __init__(self, coordinator, config, zones, zone_group):
-        """Initialize the KAITEKI climate entity."""
         super().__init__(coordinator, config)
-
         self.zones = tuple(zones)
         self.zone_group = zone_group
-
-        suffix = "zone-" + "-".join(str(zone) for zone in self.zones)
-        self._attr_unique_id = self._build_unique_id(suffix)
+        zone_group.add(self)
 
         zone_name = "+".join(str(zone) for zone in self.zones)
         self._attr_name = f"{self._device_name} Zone {zone_name}"
+        self._attr_unique_id = self._build_unique_id(f"zone-{zone_name}")
 
-        zone_group.add(self)
+        # KAITEKI airflow is carried by 0xF1 rather than the standard
+        # ECHONET fan-speed EPC.
+        self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
+        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
-    def _get_zone_value(self, suffix):
-        """Return a value for the representative physical zone."""
-        zone = self.zones[0]
-
+    def _zone_value(self, suffix):
+        """Return a value for the first physical zone in this group."""
         f1 = self.coordinator.data.get(0xF1)
-
         if not isinstance(f1, dict):
             return None
+        return f1.get(f"zone{self.zones[0]}{suffix}")
 
-        return f1.get(f"zone{zone}{suffix}")
+    @property
+    def current_temperature(self):
+        """Return the room temperature for the representative zone."""
+        fa = self.coordinator.data.get(0xFA)
+        if not isinstance(fa, dict):
+            return super().current_temperature
+        return fa.get(f"zone{self.zones[0]}Temp")
 
     @property
     def target_temperature(self):
-        """Return the target temperature."""
-        return self._get_zone_value("TargetTemp")
+        """Return the target temperature for this zone group."""
+        return self._zone_value("TargetTemp")
 
     @property
     def fan_mode(self):
-        """Return the current fan mode."""
-        return self._get_zone_value("AirFlow")
-
-    @property
-    def zone_status(self):
-        """Return the current zone status."""
-        return self._get_zone_value("Status")
+        """Return the airflow setting for this zone group."""
+        return self._zone_value("AirFlow")
 
     @property
     def zone_program_operation(self):
-        """Return the current program operation."""
-        return self._get_zone_value("ProgramOperation")
+        """Return the program operation for this zone group."""
+        return self._zone_value("ProgramOperation")
+
+    @property
+    def is_on(self):
+        """Return the zone power/status."""
+        return self._zone_value("Status") == "on"
+
+    @property
+    def hvac_action(self):
+        """Return the common HVAC action using this zone's target."""
+        if not self.is_on:
+            from homeassistant.components.climate.const import HVACAction
+            return HVACAction.OFF
+
+        from homeassistant.components.climate.const import HVACAction
+
+        mode = self.coordinator.data.get(0xB0)
+        if mode == "heat":
+            return HVACAction.HEATING
+        if mode == "cool":
+            return HVACAction.COOLING
+        if mode == "dry":
+            return HVACAction.DRYING
+        if mode == "fan_only":
+            return HVACAction.FAN
+        if mode in ("auto", "heat_cool"):
+            room = self.current_temperature
+            target = self.target_temperature
+            if room is not None and target is not None:
+                if target < room:
+                    return HVACAction.COOLING
+                if target > room:
+                    return HVACAction.HEATING
+            return HVACAction.IDLE
+        return super().hvac_action
 
     async def async_set_temperature(self, **kwargs):
-        """Set the target temperature for this zone group."""
+        """Set target temperature for this zone group."""
         hvac_mode = kwargs.get(ATTR_HVAC_MODE)
-
         if hvac_mode is not None:
             await super().async_set_hvac_mode(hvac_mode)
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
-
         if temperature is None:
             return
 
         temperature = self._normalize_settemp(temperature)
-
-        overrides = {}
-
-        for zone in self.zones:
-            overrides[f"zone{zone}TargetTemp"] = temperature
-
+        overrides = {
+            f"zone{zone}TargetTemp": temperature for zone in self.zones
+        }
         await self.zone_group.async_set_f1(overrides)
 
     async def async_set_fan_mode(self, fan_mode):
-        """Set the fan mode for this zone group."""
-        overrides = {}
+        """Set airflow for this zone group."""
+        overrides = {f"zone{zone}AirFlow": fan_mode for zone in self.zones}
+        await self.zone_group.async_set_f1(overrides)
 
-        for zone in self.zones:
-            overrides[f"zone{zone}AirFlow"] = fan_mode
+    async def async_turn_on(self):
+        """Turn on this zone group."""
+        overrides = {f"zone{zone}Status": "on" for zone in self.zones}
+        await self.zone_group.async_set_f1(overrides)
 
+    async def async_turn_off(self):
+        """Turn off this zone group."""
+        overrides = {f"zone{zone}Status": "off" for zone in self.zones}
         await self.zone_group.async_set_f1(overrides)
 
 
 def create_kaiteki_climate_entities(coordinator, config):
-    """Create KAITEKI climate entities according to zoneGrouping."""
+    """Create KAITEKI climate entities from F2 zoneGrouping."""
     f2 = coordinator.data.get(0xF2)
-
     if not isinstance(f2, dict):
-        _LOGGER.warning("KAITEKI F2 data is unavailable")
         return []
 
     grouping = f2.get("zoneGrouping")
-
-    if grouping not in ZONE_GROUPINGS:
-        _LOGGER.warning(
-            "Unknown KAITEKI zoneGrouping: %s",
-            grouping,
-        )
+    zones = ZONE_GROUPINGS.get(grouping)
+    if zones is None:
         return []
 
-    zone_group = KaitekiZoneGroup(
-        coordinator,
-        ZONE_GROUPINGS[grouping],
-    )
-
+    zone_group = KaitekiZoneGroup(coordinator, zones)
     return [
         EchonetKaitekiClimate(
             coordinator,
             config,
-            zones=zones,
-            zone_group=zone_group,
+            physical_zones,
+            zone_group,
         )
-        for zones in ZONE_GROUPINGS[grouping]
+        for physical_zones in zones
     ]
