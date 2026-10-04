@@ -2,9 +2,7 @@
 
 import logging
 
-from homeassistant.components.climate.const import (
-    ATTR_HVAC_MODE,
-)
+from homeassistant.components.climate.const import ATTR_HVAC_MODE
 from homeassistant.const import ATTR_TEMPERATURE
 
 from .climate import EchonetClimate
@@ -26,11 +24,32 @@ ZONE_GROUPINGS = {
 }
 
 
-class KaitekiZoneGroup:
-    """Manage climate entities belonging to one KAITEKI device."""
+STATUS_TO_BYTE = {
+    "off": 0x30,
+    "on": 0x31,
+    "keep": 0x32,
+}
 
-    def __init__(self, grouping):
+AIRFLOW_TO_BYTE = {
+    "low": 0x31,
+    "high": 0x32,
+    "auto": 0x41,
+}
+
+PROGRAM_OPERATION_TO_BYTE = {
+    "off": 0x30,
+    "timer1": 0x31,
+    "timer2": 0x32,
+    "timer3": 0x33,
+}
+
+
+class KaitekiZoneGroup:
+    """Manage the climate entities belonging to one KAITEKI device."""
+
+    def __init__(self, coordinator, grouping):
         """Initialize the zone group."""
+        self.coordinator = coordinator
         self.grouping = grouping
         self.entities = []
 
@@ -48,24 +67,108 @@ class KaitekiZoneGroup:
 
     def get_value(self, zone, attribute):
         """
-        Get an attribute from the entity responsible for a zone.
+        Return a value for a physical zone.
 
-        If that entity no longer exists, fall back in the order
-        zone 1 -> zone 2 -> zone 3.
+        If the corresponding entity no longer exists, use the first
+        available zone in the order zone 1 -> zone 2 -> zone 3.
         """
         entity = self.get_entity_for_zone(zone)
 
         if entity is not None:
             return getattr(entity, attribute)
 
-        # Fallback for an entity that was removed/disabled by the user.
         for fallback_zone in (1, 2, 3):
             entity = self.get_entity_for_zone(fallback_zone)
-
             if entity is not None:
                 return getattr(entity, attribute)
 
         return None
+
+    def _current_f1(self):
+        """Return the currently received F1 dictionary."""
+        f1 = self.coordinator.data.get(0xF1)
+
+        if not isinstance(f1, dict):
+            return {}
+
+        return f1
+
+    def _get_unknown(self, zone, index):
+        """Return an unknown F1 byte from the last received value."""
+        key = f"unknown{zone}-{index}"
+        value = self._current_f1().get(key)
+
+        if value is None:
+            return 0
+
+        return value
+
+    def build_f1(self, overrides=None):
+        """
+        Build the complete F1 EDT.
+
+        Values not present in overrides are taken from the current
+        climate entities. Unknown bytes are preserved from the received F1.
+        """
+        overrides = overrides or {}
+
+        data = {}
+
+        for zone in (1, 2, 3):
+            data[f"zone{zone}Status"] = self.get_value(
+                zone, "zone_status"
+            )
+            data[f"zone{zone}TargetTemp"] = self.get_value(
+                zone, "target_temperature"
+            )
+            data[f"zone{zone}AirFlow"] = self.get_value(
+                zone, "fan_mode"
+            )
+            data[f"zone{zone}ProgramOperation"] = self.get_value(
+                zone, "zone_program_operation"
+            )
+
+            for index in (1, 2, 3):
+                data[f"unknown{zone}-{index}"] = self._get_unknown(
+                    zone, index
+                )
+
+        data.update(overrides)
+
+        edt = bytearray()
+
+        for zone in (1, 2, 3):
+            status = data[f"zone{zone}Status"]
+            target_temp = data[f"zone{zone}TargetTemp"]
+            airflow = data[f"zone{zone}AirFlow"]
+            program = data[f"zone{zone}ProgramOperation"]
+
+            edt.append(STATUS_TO_BYTE[status])
+            edt.append(int(target_temp))
+            edt.append(AIRFLOW_TO_BYTE[airflow])
+
+            edt.append(data[f"unknown{zone}-1"])
+            edt.append(data[f"unknown{zone}-2"])
+            edt.append(data[f"unknown{zone}-3"])
+
+            edt.append(PROGRAM_OPERATION_TO_BYTE[program])
+
+        return bytes(edt)
+
+    async def async_set_f1(self, overrides=None):
+        """Send a complete F1 SET."""
+        edt = self.build_f1(overrides)
+
+        mes = {
+            "EPC": 0xF1,
+            "PDC": len(edt),
+            "EDT": edt,
+        }
+
+        await self.coordinator.async_set_and_verify(
+            [0xF1],
+            self.coordinator._instance.setMessages([mes]),
+        )
 
 
 class EchonetKaitekiClimate(EchonetClimate):
@@ -86,38 +189,43 @@ class EchonetKaitekiClimate(EchonetClimate):
 
         zone_group.add(self)
 
+    def _get_zone_value(self, suffix):
+        """Return a value for the representative physical zone."""
+        zone = self.zones[0]
+
+        f1 = self.coordinator.data.get(0xF1)
+
+        if not isinstance(f1, dict):
+            return None
+
+        return f1.get(f"zone{zone}{suffix}")
+
     @property
     def target_temperature(self):
-        """Return the target temperature for this entity."""
+        """Return the target temperature."""
         return self._get_zone_value("TargetTemp")
 
     @property
     def fan_mode(self):
-        """Return the fan mode for this entity."""
+        """Return the current fan mode."""
         return self._get_zone_value("AirFlow")
 
     @property
     def zone_status(self):
-        """Return the status for this entity."""
+        """Return the current zone status."""
         return self._get_zone_value("Status")
 
     @property
     def zone_program_operation(self):
-        """Return the program operation value for this entity."""
+        """Return the current program operation."""
         return self._get_zone_value("ProgramOperation")
-
-    def _get_zone_value(self, suffix):
-        """Return the value for the first physical zone represented by this entity."""
-        zone = self.zones[0]
-        return self.coordinator.data.get(f"zone{zone}{suffix}")
 
     async def async_set_temperature(self, **kwargs):
         """Set the target temperature for this zone group."""
         hvac_mode = kwargs.get(ATTR_HVAC_MODE)
 
         if hvac_mode is not None:
-            # hvac_mode is handled by the common climate implementation.
-            await self.async_set_hvac_mode(hvac_mode)
+            await super().async_set_hvac_mode(hvac_mode)
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
 
@@ -126,45 +234,44 @@ class EchonetKaitekiClimate(EchonetClimate):
 
         temperature = self._normalize_settemp(temperature)
 
-        # F1 construction/SET is intentionally not implemented yet.
-        #
-        # The next step will collect:
-        #
-        #   zone1TargetTemp
-        #   zone2TargetTemp
-        #   zone3TargetTemp
-        #
-        # from the three physical zones, replace the values belonging to
-        # self.zones, and send the resulting F1.
-        raise NotImplementedError(
-            "KAITEKI F1 temperature SET is not implemented yet"
-        )
+        overrides = {}
+
+        for zone in self.zones:
+            overrides[f"zone{zone}TargetTemp"] = temperature
+
+        await self.zone_group.async_set_f1(overrides)
 
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode for this zone group."""
-        # F1 construction/SET is intentionally not implemented yet.
-        raise NotImplementedError(
-            "KAITEKI F1 fan mode SET is not implemented yet"
-        )
+        overrides = {}
+
+        for zone in self.zones:
+            overrides[f"zone{zone}AirFlow"] = fan_mode
+
+        await self.zone_group.async_set_f1(overrides)
 
 
 def create_kaiteki_climate_entities(coordinator, config):
-    """
-    Create KAITEKI climate entities according to zoneGrouping.
+    """Create KAITEKI climate entities according to zoneGrouping."""
+    f2 = coordinator.data.get(0xF2)
 
-    Returns:
-        List of KAITEKI climate entities.
-    """
-    grouping = coordinator.data.get("zoneGrouping")
+    if not isinstance(f2, dict):
+        _LOGGER.warning("KAITEKI F2 data is unavailable")
+        return []
+
+    grouping = f2.get("zoneGrouping")
 
     if grouping not in ZONE_GROUPINGS:
         _LOGGER.warning(
-            "Unknown KAITEKI zoneGrouping: 0x%02X",
-            grouping if grouping is not None else 0,
+            "Unknown KAITEKI zoneGrouping: %s",
+            grouping,
         )
         return []
 
-    zone_group = KaitekiZoneGroup(ZONE_GROUPINGS[grouping])
+    zone_group = KaitekiZoneGroup(
+        coordinator,
+        ZONE_GROUPINGS[grouping],
+    )
 
     return [
         EchonetKaitekiClimate(
