@@ -35,11 +35,11 @@ def _hex(edt):
     except Exception:
       return None
 
-def _0130F0(edt):
-    return _int(edt[1:2],{
-            0x30: "off",
-            0x31: "on",
-          })
+def _0130F1(edt):
+    return _int(edt[1:2], {
+                0x30: "off",
+                0x31: "on",
+            })
 
 def _0130F1(edt):
     z1p = z1t = z1f = u11 = u12 = u13 = z1r = None
@@ -108,35 +108,34 @@ def _0130F1(edt):
         })
     except:
         pass
-    finally:
-        return {
-          "zone1Status": z1p,
-          "zone1TargetTemp": z1t,
-          "zone1AirFlow": z1f,
-#          "unknown1-1": u11,
-#          "unknown1-2": u12,
-#          "unknown1-3": u13,
-          "zone1ProgramOperation": z1r,
-          "zone2Status": z2p,
-          "zone2TargetTemp": z2t,
-          "zone2AirFlow": z2f,
-#          "unknown2-1": u21,
-#          "unknown2-2": u22,
-#          "unknown2-3": u23,
-          "zone2ProgramOperation": z2r,
-          "zone3Status": z3p,
-          "zone3TargetTemp": z3t,
-          "zone3AirFlow": z3f,
-#          "unknown3-1": u31,
-#          "unknown3-2": u32,
-#          "unknown3-3": u33,
-          "zone3ProgramOperation": z3r,
-        }
+    return {
+      "zone1Status": z1p,
+      "zone1TargetTemp": z1t,
+      "zone1AirFlow": z1f,
+      "unknown1-1": u11,
+      "unknown1-2": u12,
+      "unknown1-3": u13,
+      "zone1ProgramOperation": z1r,
+      "zone2Status": z2p,
+      "zone2TargetTemp": z2t,
+      "zone2AirFlow": z2f,
+      "unknown2-1": u21,
+      "unknown2-2": u22,
+      "unknown2-3": u23,
+      "zone2ProgramOperation": z2r,
+      "zone3Status": z3p,
+      "zone3TargetTemp": z3t,
+      "zone3AirFlow": z3f,
+      "unknown3-1": u31,
+      "unknown3-2": u32,
+      "unknown3-3": u33,
+      "zone3ProgramOperation": z3r,
+    }
 
 def _0130F2(edt):
     return {
       #0x30:off, 0x31:ab, 0x32:ac, 0x33:bc, 0x34:abc
-      "zoneGrouping": _int(edt[0:1]),
+      "zoneGrouping": _int(edt[0:1])
     }
 
 def _0130FA(edt):
@@ -151,23 +150,36 @@ def _0130FA(edt):
         u3 = _int(edt[6:7])
     except:
         pass
-    finally:
-        return {
-          "zone1Temp": t1,
-          "zone2Temp": t2,
-          "zone3Temp": t3,
+    return {
+      "zone1Temp": t1,
+      "zone2Temp": t2,
+      "zone3Temp": t3,
 #          "unknown1": u1,
 #          "unknown2": u2,
-          "outsideTemp": ot,
+      "outsideTemp": ot,
 #          "unknown3": u3,
-        }
+    }
 
 QUIRKS = {
-    0xF0: {
-        "EPC_FUNCTION": _0130F0,
+    0xB4: {
+        "EPC_FUNCTION": [
+            _int,
+            {
+                0x46: "High",
+                0x3C: "Medium",
+                0x32: "Low",
+            },
+        ],
         "ENL_OP_CODE": {
-          CONF_NAME: "Away Mode",
-          CONF_ICON: "mdi:walk",
+            CONF_NAME: "Humidity setting",
+            CONF_ICON: "mdi:air-humidifier",
+        },
+    },
+    0xF0: {
+        "EPC_FUNCTION": _0130F1,
+        "ENL_OP_CODE": {
+            CONF_NAME: "Away Mode",
+            CONF_ICON: "mdi:walk",
           TYPE_SELECT: {
              "off": 0x30,
              "on": 0x31,
@@ -232,3 +244,22 @@ QUIRKS = {
         },
     },
 }
+
+
+
+"""
+class KaitekiSensor(EchonetSensor):
+    def update_attr(self):
+        self._attr_options = list(self._options.keys())
+        if self._attr_current_option not in self._attr_options:
+          # maybe data value is raw(int)
+          keys = [
+              k for k, v in self._options.items() if v == self._attr_current_option
+          ]
+          if keys:
+              self._attr_current_option = keys[0]
+        self._attr_icon = self._icons.get(self._attr_current_option, self._icon_default)
+        if self._code in self._user_option_epcs:
+          if self._connector._user_options[self._code] is not False:
+              self._attr_options = self._connector._user_options[self._code]
+"""
