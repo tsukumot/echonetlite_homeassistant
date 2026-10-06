@@ -9,10 +9,16 @@ custom_components/echonetlite/quirks/Chofu Seisakusho/MC-38/0130.py
 
 もし、機器名（MC-38）が異なる場合はディレクトリ名を変更してください。
 
+ただ、機器のバージョンが大きく異なる場合の動作保証などはできません。（テストできないため）
+
+進行状況：設定値を見て最大3つあるゾーンごとにClimateエンティティを生成。
+設定変更はまだ動作しない。
+
 
 なお、制作に当たり、[ECHONETLite Custom MRA](https://github.com/hiroaki0923/ECHONETLite-Custom-MRA)を参考にさせていただきました。
 
 多謝。
+
 
 
 # ECHONETLite Platform Custom Component for Home Assistant
