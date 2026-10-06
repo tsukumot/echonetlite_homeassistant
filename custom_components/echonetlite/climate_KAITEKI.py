@@ -1,10 +1,8 @@
 """KAITEKI multi-zone climate entities."""
 
-from homeassistant.components.climate.const import (
-    ATTR_HVAC_MODE,
-    ClimateEntityFeature,
-)
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE
+from pychonet.HomeAirConditioner import ENL_HVAC_MODE
 
 from .climate import EchonetClimate
 
@@ -156,6 +154,7 @@ class KaitekiZoneGroup:
         )
 
 
+
 class EchonetKaitekiClimate(EchonetClimate):
     """Climate entity representing one KAITEKI zone group."""
 
@@ -206,36 +205,34 @@ class EchonetKaitekiClimate(EchonetClimate):
 
     @property
     def is_on(self):
-        """Return the zone power/status."""
-        return self._zone_value("Status") == "on"
+        """Return whether this zone is active, including the KAITEKI Keep state."""
+        return self._zone_value("Status") in ("on", "keep")
+
+    @property
+    def hvac_mode(self):
+        """Return HVAC mode, treating KAITEKI Keep like the shared 'other' mode.
+
+        The integration's existing "その他" option is reused here:
+        - as_idle: keep the last heat/cool/dry mode visible
+        - otherwise: expose Keep as off
+
+        Changing the HVAC mode uses the normal parent implementation, which
+        writes 0x80/0xB0 and therefore naturally clears Keep.
+        """
+        if self._zone_value("Status") == "keep":
+            if self.coordinator._user_options.get(ENL_HVAC_MODE) == "as_idle":
+                return getattr(self, "_last_mode", HVACMode.OFF)
+            return HVACMode.OFF
+        return super().hvac_mode
 
     @property
     def hvac_action(self):
-        """Return the common HVAC action using this zone's target."""
-        if not self.is_on:
+        """Return HVAC action, exposing KAITEKI Keep as idle when configured."""
+        if self._zone_value("Status") == "keep":
             from homeassistant.components.climate.const import HVACAction
+            if self.coordinator._user_options.get(ENL_HVAC_MODE) == "as_idle":
+                return HVACAction.IDLE
             return HVACAction.OFF
-
-        from homeassistant.components.climate.const import HVACAction
-
-        mode = self.coordinator.data.get(0xB0)
-        if mode == "heat":
-            return HVACAction.HEATING
-        if mode == "cool":
-            return HVACAction.COOLING
-        if mode == "dry":
-            return HVACAction.DRYING
-        if mode == "fan_only":
-            return HVACAction.FAN
-        if mode in ("auto", "heat_cool"):
-            room = self.current_temperature
-            target = self.target_temperature
-            if room is not None and target is not None:
-                if target < room:
-                    return HVACAction.COOLING
-                if target > room:
-                    return HVACAction.HEATING
-            return HVACAction.IDLE
         return super().hvac_action
 
     async def async_set_temperature(self, **kwargs):
@@ -265,8 +262,19 @@ class EchonetKaitekiClimate(EchonetClimate):
         await self.zone_group.async_set_f1(overrides)
 
     async def async_turn_off(self):
-        """Turn off this zone group."""
-        overrides = {f"zone{zone}Status": "off" for zone in self.zones}
+        """Turn off, or enter Keep when program operation is active."""
+        f1 = self.coordinator.data.get(0xF1)
+        if not isinstance(f1, dict):
+            raise ValueError("Current F1 data is unavailable")
+
+        overrides = {}
+        for zone in self.zones:
+            program = f1.get(f"zone{zone}ProgramOperation")
+            # The physical device uses the OFF command contextually:
+            # only an active timer program enters Keep; otherwise power off.
+            status = "keep" if program in ("timer1", "timer2", "timer3") else "off"
+            overrides[f"zone{zone}Status"] = status
+
         await self.zone_group.async_set_f1(overrides)
 
 
@@ -282,6 +290,7 @@ def create_kaiteki_climate_entities(coordinator, config):
         return []
 
     zone_group = KaitekiZoneGroup(coordinator, zones)
+
     return [
         EchonetKaitekiClimate(
             coordinator,
