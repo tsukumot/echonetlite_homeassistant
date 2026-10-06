@@ -3,7 +3,7 @@
 
 現段階では主な値が取れるだけで、設定変更はあまりできません。
 
-#使い方
+## 使い方
 [custom_components/echonetlite/quirks/Chofu Seisakusho/MC-38/0130.py]
 (https://raw.githubusercontent.com/tsukumot/echonetlite_homeassistant/refs/heads/master/custom_components/echonetlite/quirks/Chofu%20Seisakusho/MC-38/0130.py)
 
