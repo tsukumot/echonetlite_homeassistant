@@ -35,11 +35,11 @@ def _hex(edt):
     except Exception:
       return None
 
-def _0130F1(edt):
-    return _int(edt[1:2], {
-                0x30: "off",
-                0x31: "on",
-            })
+def _0130F0(edt):
+    return _int(edt[1:2],{
+               0x30: "off",
+               0x31: "on",
+           })
 
 def _0130F1(edt):
     z1p = z1t = z1f = u11 = u12 = u13 = z1r = None
@@ -176,14 +176,14 @@ QUIRKS = {
         },
     },
     0xF0: {
-        "EPC_FUNCTION": _0130F1,
+        "EPC_FUNCTION": _0130F0,
         "ENL_OP_CODE": {
             CONF_NAME: "Away Mode",
             CONF_ICON: "mdi:walk",
-          TYPE_SELECT: {
-             "off": 0x30,
-             "on": 0x31,
-          },
+            TYPE_SELECT: {
+               "off": 0x30,
+               "on": 0x31,
+            },
         },
     },
     0xF1: {
