@@ -1,6 +1,9 @@
 #快適エアリー
 #import logging
 #_LOGGER = logging.getLogger(__name__)
+from pathlib import Path
+additional = Path(__file__).resolve().parent.name == "MC-38"
+#additional = False
 
 from homeassistant.components.sensor.const import (
     CONF_STATE_CLASS,
@@ -36,23 +39,23 @@ def _hex(edt):
       return None
 
 def _0130F0(edt):
-    return _int(edt[1:2],{
+    return _int(edt[1:2], {
                0x30: "off",
                0x31: "on",
-           })
+    })
 
 def _0130F1(edt):
     z1p = z1t = z1f = u11 = u12 = u13 = z1r = None
     z2p = z2t = z2f = u21 = u22 = u23 = z2r = None
     z3p = z3t = z3f = u31 = u32 = u33 = z3r = None
     try:
-        z1p = _int(edt[0:1],{
+        z1p = _int(edt[0:1], {
           0x30: "off",
           0x31: "on",
           0x32: "keep",
         })
         z1t = _int(edt[1:2])
-        z1f = _int(edt[2:3],{
+        z1f = _int(edt[2:3], {
           0x31: "low",
           0x32: "high",
           0x41: "auto",
@@ -60,19 +63,19 @@ def _0130F1(edt):
         u11 = _int(edt[3:4])
         u12 = _int(edt[4:5])
         u13 = _int(edt[5:6])
-        z1r = _int(edt[6:7],{
+        z1r = _int(edt[6:7], {
           0x30: "off",
           0x31: "timer1",
           0x32: "timer2",
           0x33: "timer3",
         })
-        z2p = _int(edt[7:8],{
+        z2p = _int(edt[7:8], {
           0x30: "off",
           0x31: "on",
           0x32: "keep",
         })
         z2t = _int(edt[8:9])
-        z2f = _int(edt[9:10],{
+        z2f = _int(edt[9:10], {
           0x31: "low",
           0x32: "high",
           0x41: "auto",
@@ -80,19 +83,19 @@ def _0130F1(edt):
         u21 = _int(edt[10:11])
         u22 = _int(edt[11:12])
         u23 = _int(edt[12:13])
-        z2r = _int(edt[13:14],{
+        z2r = _int(edt[13:14], {
           0x30: "off",
           0x31: "timer1",
           0x32: "timer2",
           0x33: "timer3",
         })
-        z3p = _int(edt[14:15],{
+        z3p = _int(edt[14:15], {
           0x30: "off",
           0x31: "on",
           0x32: "keep",
         })
         z3t = _int(edt[15:16])
-        z3f = _int(edt[16:17],{
+        z3f = _int(edt[16:17], {
           0x31: "low",
           0x32: "high",
           0x41: "auto",
@@ -100,7 +103,7 @@ def _0130F1(edt):
         u31 = _int(edt[17:18])
         u32 = _int(edt[18:19])
         u33 = _int(edt[19:20])
-        z3r = _int(edt[20:21],{
+        z3r = _int(edt[20:21], {
           0x30: "off",
           0x31: "timer1",
           0x32: "timer2",
@@ -161,18 +164,36 @@ def _0130FA(edt):
     }
 
 QUIRKS = {
-    0xB4: {
-        "EPC_FUNCTION": [
-            _int,
-            {
-                0x46: "High",
-                0x3C: "Medium",
-                0x32: "Low",
+    0xB0: {
+        "EPC_FUNCTION": _int,
+#        "EPC_FUNCTION": [
+#            _int,
+#            {
+#                0x42: "cool",
+#                0x43: "heat",
+#                0x44: "dry",
+#            },
+#        ],
+        "ENL_OP_CODE": {
+            CONF_NAME: "Operation mode setting",
+#            CONF_ICON: "mdi:air-humidifier",
+            TYPE_SELECT: {
+               "cool": 0x42,
+               "heat": 0x43,
+               "dry": 0x44,
             },
-        ],
+        },
+    },
+    0xB4: {
+        "EPC_FUNCTION": _int,
         "ENL_OP_CODE": {
             CONF_NAME: "Humidity setting",
             CONF_ICON: "mdi:air-humidifier",
+            TYPE_SELECT: {
+               "Low": 0x32,
+               "Medium": 0x3C,
+               "High": 0x46,
+            },
         },
     },
     0xF0: {
@@ -190,7 +211,6 @@ QUIRKS = {
         "EPC_FUNCTION": _0130F1,
         "ENL_OP_CODE": {
           CONF_NAME: "Zone Configuration",
-#          CONF_TYPE: SensorDeviceClass.KAITEKIAIRLY,
           TYPE_DATA_DICT: [
               'zone1Status',
               'zone1TargetTemp',
@@ -244,22 +264,9 @@ QUIRKS = {
         },
     },
 }
-
-
-
 """
-class KaitekiSensor(EchonetSensor):
-    def update_attr(self):
-        self._attr_options = list(self._options.keys())
-        if self._attr_current_option not in self._attr_options:
-          # maybe data value is raw(int)
-          keys = [
-              k for k, v in self._options.items() if v == self._attr_current_option
-          ]
-          if keys:
-              self._attr_current_option = keys[0]
-        self._attr_icon = self._icons.get(self._attr_current_option, self._icon_default)
-        if self._code in self._user_option_epcs:
-          if self._connector._user_options[self._code] is not False:
-              self._attr_options = self._connector._user_options[self._code]
+if additional:
+  QUIRKS.0xF2.ENL_OP_CODE.TYPE_DATA_DICT.update([
+              'zoneGrouping',
+    ])
 """
