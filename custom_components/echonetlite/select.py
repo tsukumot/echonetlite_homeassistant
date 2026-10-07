@@ -33,10 +33,30 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
         _non_setup_single_entity = NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(
             eojcc, set()
         )
+        
+        if eojgc == 1 and eojcc == 0x30:
+            _LOGGER.error(
+                "========== SELECT B0 CHECK ==========\n"
+                "host=%s\n"
+                "setmap=%s\n"
+                "non_setup=%s\n"
+                "loop_targets=%s",
+                entity["echonetlite"]._host,
+                [hex(x) for x in entity["instance"]["setmap"]],
+                [hex(x) for x in _non_setup_single_entity],
+                [
+                    hex(x)
+                    for x in (
+                        set(entity["instance"]["setmap"])
+                        - _non_setup_single_entity
+                    )
+                ],
+            )
+
         # configure select entities by looking up full ENL_OP_CODE dict
         for op_code in list(
             set(entity["instance"]["setmap"])
-            - NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(eojcc, set())
+            #- NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(eojcc, set())
         ):
             coordinator = entity["echonetlite"]
             if (
@@ -48,6 +68,12 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
             epc_function_data = entity["echonetlite"]._instance.EPC_FUNCTIONS.get(
                 op_code, None
             )
+            
+            # Exclude EPCs containing TYPE_SELECT from the exclusion list using quirk
+            _enl_op_code_dict = _enl_op_codes.get(op_code, {})
+            if TYPE_SELECT in _enl_op_code_dict: 
+                _non_setup_single_entity.discard(op_code)
+
             if op_code in _non_setup_single_entity:
                 continue
             _by_epc_func = (
@@ -55,7 +81,6 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                 and type(epc_function_data[1]) == dict
                 and len(epc_function_data[1]) > 2
             )
-            _enl_op_code_dict = _enl_op_codes.get(op_code, {})
             if _by_epc_func or TYPE_SELECT in _enl_op_code_dict.keys():
                 entities.append(
                     EchonetSelect(
