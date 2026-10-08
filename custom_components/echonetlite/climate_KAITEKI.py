@@ -1,12 +1,18 @@
 """KAITEKI multi-zone climate entities."""
+import logging
 
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
+from homeassistant.components.climate.const import (
+    ATTR_HVAC_MODE,
+    ClimateEntityFeature,
+    HVACAction,
+    HVACMode,
+)
 from homeassistant.const import ATTR_TEMPERATURE
 from pychonet.HomeAirConditioner import ENL_HVAC_MODE
 
 from .climate import EchonetClimate
 
-
+_LOGGER = logging.getLogger(__name__)
 ZONE_GROUPINGS = {
     # 0x30: zone 1 / zone 2 / zone 3
     # 0x31: zone 1+2 / zone 3
@@ -158,6 +164,12 @@ class KaitekiZoneGroup:
 class EchonetKaitekiClimate(EchonetClimate):
     """Climate entity representing one KAITEKI zone group."""
 
+    _MODE_B0 = {
+        0x42: HVACMode.COOL,
+        0x43: HVACMode.HEAT,
+        0x44: HVACMode.DRY,
+    }
+
     def __init__(self, coordinator, config, zones, zone_group):
         super().__init__(coordinator, config)
         self.zones = tuple(zones)
@@ -204,42 +216,79 @@ class EchonetKaitekiClimate(EchonetClimate):
         return self._zone_value("ProgramOperation")
 
     @property
+    def zone_status(self):
+        return self._zone_value("Status")
+
+    @property
     def is_on(self):
         """Return whether this zone is active, including the KAITEKI Keep state."""
         return self._zone_value("Status") in ("on", "keep")
 
+    def _operation_hvac_mode(self):
+        """Return the current common 0xB0 operation mode as an HA HVAC mode."""
+        value = self.coordinator.data.get(0xB0)
+
+        # The normal decoder supplies the symbolic value.  Accept the raw EPC
+        # values too, so this remains usable if a device/decoder exposes bytes.
+        if isinstance(value, dict):
+            value = value.get("value", value.get("mode"))
+        if isinstance(value, (bytes, bytearray)) and value:
+            value = value[0]
+
+        if isinstance(value, str):
+            normalized = value.lower().replace("-", "_").replace(" ", "_")
+            return {
+                "auto": HVACMode.HEAT_COOL,
+                "cooling": HVACMode.COOL,
+                "heating": HVACMode.HEAT,
+                "dehumidification": HVACMode.DRY,
+            }.get(normalized)
+
+        return {
+            0x41: HVACMode.HEAT_COOL,
+            0x42: HVACMode.COOL,
+            0x43: HVACMode.HEAT,
+            0x44: HVACMode.DRY,
+        }.get(value)
+
     @property
     def hvac_mode(self):
-        """Return HVAC mode, treating KAITEKI Keep like the shared 'other' mode.
+        if self._zone_value("Status") in ("on", "keep"):
+            return self._MODE_B0.get(self.coordinator.data.get(0xB0))
+        return HVACMode.OFF
 
-        The integration's existing "その他" option is reused here:
-        - as_idle: keep the last heat/cool/dry mode visible
-        - otherwise: expose Keep as off
+    @property
+    def hvac_modes(self):
+        modes = [HVACMode.OFF]
+        current = self._MODE_B0.get(self.coordinator.data.get(0xB0))
+        if current is not None:
+            modes.append(current)
+        return modes
 
-        Changing the HVAC mode uses the normal parent implementation, which
-        writes 0x80/0xB0 and therefore naturally clears Keep.
-        """
-        if self._zone_value("Status") == "keep":
-            if self.coordinator._user_options.get(ENL_HVAC_MODE) == "as_idle":
-                return getattr(self, "_last_mode", HVACMode.OFF)
-            return HVACMode.OFF
-        return super().hvac_mode
+    async def async_set_hvac_mode(self, hvac_mode):
+        if hvac_mode == HVACMode.OFF:
+            await self.async_turn_off()
+        else:
+            await self.async_turn_on()   # 0xB0 は触らない
 
     @property
     def hvac_action(self):
-        """Return HVAC action, exposing KAITEKI Keep as idle when configured."""
-        if self._zone_value("Status") == "keep":
-            from homeassistant.components.climate.const import HVACAction
-            if self.coordinator._user_options.get(ENL_HVAC_MODE) == "as_idle":
-                return HVACAction.IDLE
-            return HVACAction.OFF
-        return super().hvac_action
+        status = self._zone_value("Status")
+        if status == "keep":
+            return HVACAction.IDLE
+        if status == "on":
+            return {
+                0x42: HVACAction.COOLING,
+                0x43: HVACAction.HEATING,
+                0x44: HVACAction.DRYING,
+            }.get(self.coordinator.data.get(0xB0), HVACAction.IDLE)
+        return HVACAction.OFF
 
     async def async_set_temperature(self, **kwargs):
         """Set target temperature for this zone group."""
         hvac_mode = kwargs.get(ATTR_HVAC_MODE)
         if hvac_mode is not None:
-            await super().async_set_hvac_mode(hvac_mode)
+            await self.async_set_hvac_mode(hvac_mode)
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is None:
