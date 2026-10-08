@@ -18,8 +18,6 @@
 - climate_KAITEKI.py
 - select.py
 - translations/ja.json
-- デバイスの設定 > 運転モード「その他」の取り扱い を"As Idle"に設定する
-  - Keepモードのときの表示が「待機中」になる
 
 ## 進行状況
 - 各値の読み出し、エンティティ化
