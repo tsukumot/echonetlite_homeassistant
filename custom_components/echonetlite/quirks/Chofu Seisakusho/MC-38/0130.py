@@ -166,21 +166,13 @@ def _0130FA(edt):
 QUIRKS = {
     0xB0: {
         "EPC_FUNCTION": _int,
-#        "EPC_FUNCTION": [
-#            _int,
-#            {
-#                0x42: "cool",
-#                0x43: "heat",
-#                0x44: "dry",
-#            },
-#        ],
         "ENL_OP_CODE": {
             CONF_NAME: "Operation mode setting",
 #            CONF_ICON: "mdi:air-humidifier",
             TYPE_SELECT: {
-               "cool": 0x42,
-               "heat": 0x43,
-               "dry": 0x44,
+               "Cooling": 0x42,
+               "Heating": 0x43,
+               "Dehumidification": 0x44,
             },
         },
     },
