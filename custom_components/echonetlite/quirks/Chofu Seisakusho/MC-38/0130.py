@@ -24,11 +24,14 @@ from homeassistant.const import (
     CONF_TYPE,
     CONF_UNIT_OF_MEASUREMENT,
     CONF_ICON,
+    CONF_SERVICE_DATA,
 )
 from pychonet.lib.epc_functions import _int, _to_string
 from ....const import (
     TYPE_DATA_DICT,
     TYPE_SELECT,
+    TYPE_SWITCH,
+    CONF_SERVICE_DATA,
 )
 from ....sensor import EchonetSensor
 
@@ -164,6 +167,18 @@ def _0130FA(edt):
     }
 
 QUIRKS = {
+    0x80: {
+        "EPC_FUNCTION": _int,
+        "ENL_OP_CODE": {
+            CONF_NAME: "Power setting",
+            CONF_ICON: "mdi:power",
+            TYPE_SWITCH: True,
+            CONF_SERVICE_DATA: {
+                "on": 0x30,
+                "off": 0x31
+            },
+        },
+    },
     0xB0: {
         "EPC_FUNCTION": _int,
         "ENL_OP_CODE": {
