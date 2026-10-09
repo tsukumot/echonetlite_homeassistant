@@ -3,6 +3,7 @@ from homeassistant.const import CONF_ICON, CONF_NAME
 from homeassistant.components.select import SelectEntity
 from .base_entity import EchonetEntity
 from .sharp import SHARP_MODES, sharp_value
+from .select_KAITEKI import create_kaiteki_select_entities
 from pychonet.HomeAirConditioner import (
     ENL_AIR_HORZ,
     ENL_AIR_VERT,
@@ -33,6 +34,9 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
         _non_setup_single_entity = set(
             NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(eojcc, set())
         )
+
+        # Adds nothing unless this instance is a supported KAITEKI unit
+        entities.extend(create_kaiteki_select_entities(entity["echonetlite"], config))
 
         # configure select entities by looking up full ENL_OP_CODE dict
         for op_code in list(

@@ -984,18 +984,9 @@ class ECHONETConnector(DataUpdateCoordinator[dict]):
         # every EPC including those in STATMAP. The push-prune only applies
         # to _make_batch_request_flags which drives ongoing polling.
         _epc_keys = set(self._instance.EPC_FUNCTIONS.keys()) - set(EPC_SUPER.keys())
-        
-        _LOGGER.error(
-            "========== KAITEKI FETCH TEST: EPC_FUNCTIONS F2=%r ==========",
-            self._instance.EPC_FUNCTIONS.get(0xF2),
-        )
-        
+
         for item in self._getPropertyMap:
             if item in _epc_keys:
-                if item == 0xF2:
-                    _LOGGER.error(
-                        "========== KAITEKI FETCH TEST: F2 ADDED TO FLAGS =========="
-                    )
                 flags.append(item)
 
         # Build final list with None initialization

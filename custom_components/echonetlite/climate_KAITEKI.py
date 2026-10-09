@@ -1,6 +1,7 @@
 """KAITEKI multi-zone climate entities."""
 import logging
 import asyncio
+from weakref import WeakKeyDictionary
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
@@ -9,7 +10,11 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE
-from pychonet.HomeAirConditioner import ENL_HVAC_MODE
+from pychonet.HomeAirConditioner import ( 
+  ENL_HVAC_MODE,
+  ENL_STATUS
+)
+from .const import DATA_STATE_ON
 
 from .climate import EchonetClimate
 
@@ -95,16 +100,27 @@ class KaitekiZoneGroup:
         return bytes(edt)  # 21 bytes
 
     async def async_set_f1(self, overrides=None):
+        # The unit acknowledges F1 writes but silently ignores them while the
+        # main power (0x80) is off. Turning the main power on would switch on
+        # every zone, so it is left to the user (main power switch) instead.
+        if not _main_power_is_on(self.coordinator):
+            raise HomeAssistantError(
+                "KAITEKI main power is off; turn it on before changing zones"
+            )
+
         async with self._lock:
             edt = self._build_f1(overrides)
+            _LOGGER.debug("KAITEKI F1 SET overrides=%s edt=%s", overrides, edt.hex())
             ok = await self.coordinator._instance.setMessage(
                 0xF1, int.from_bytes(edt, "big"), pdc=len(edt)
             )
+            _LOGGER.debug("KAITEKI F1 SET ack=%s", ok)
             if not ok:
                 raise HomeAssistantError("KAITEKI did not acknowledge F1")
 
             await asyncio.sleep(0.5)
             confirmed = await self.coordinator.poll_pychonet_specific([0xF1])
+            _LOGGER.debug("KAITEKI F1 readback=%s", confirmed)
             if confirmed:
                 self.coordinator.async_set_updated_data(
                     {**(self.coordinator.data or {}), **confirmed}
@@ -266,39 +282,60 @@ class EchonetKaitekiClimate(EchonetClimate):
         await self.zone_group.async_set_f1(overrides)
 
     async def async_turn_off(self):
-        # OFFを送る。タイマー有効時にkeepへ移行するかは機器側が決める。
-        overrides = {f"zone{zone}Status": "off" for zone in self.zones}
-        await self.zone_group.async_set_f1(overrides)
+        # With the main power off every zone is already off
+        if not _main_power_is_on(self.coordinator):
+            return
 
-"""
-        # Turn off, or enter Keep when program operation is active.
-        f1 = self.coordinator.data.get(0xF1)
-        if not isinstance(f1, dict):
-            raise ValueError("Current F1 data is unavailable")
+# One shared KaitekiZoneGroup per coordinator, so every platform (climate,
+# select) serialises its read-modify-write of EPC 0xF1 through the same lock.
+_ZONE_GROUPS: "WeakKeyDictionary" = WeakKeyDictionary()
 
-        overrides = {}
-        for zone in self.zones:
-            program = f1.get(f"zone{zone}ProgramOperation")
-            # The physical device uses the OFF command contextually:
-            # only an active timer program enters Keep; otherwise power off.
-            status = "keep" if program in ("timer1", "timer2", "timer3") else "off"
-            overrides[f"zone{zone}Status"] = status
+# Supported KAITEKI units. These values mirror the quirks directory layout
+# (quirks/<manufacturer>/<product code>/0130.py) used by connectors.py.
+KAITEKI_MANUFACTURER = "Chofu Seisakusho"          # fill in the manufacturer string
+KAITEKI_PRODUCT_CODES = {
+  "MC-38",
+} # fill in the product code(s)
 
-        await self.zone_group.async_set_f1(overrides)
-"""
+def is_kaiteki(coordinator) -> bool:
+    """Whether this coordinator is a supported KAITEKI air conditioner.
+
+    Identification relies on the device class and the manufacturer/product
+    code only, because older firmware may lack EPC 0xF2 or report other values.
+    """
+    return (
+        (coordinator._eojgc, coordinator._eojcc) == (0x01, 0x30)
+        and coordinator._manufacturer == KAITEKI_MANUFACTURER
+        and coordinator._quirk_product_code in KAITEKI_PRODUCT_CODES
+    )
+
+
+def get_kaiteki_zones(coordinator):
+    """Return the physical zone layout from F2 zoneGrouping, or None."""
+    if not is_kaiteki(coordinator):
+        return None
+    f2 = coordinator.data.get(0xF2)
+    if not isinstance(f2, dict):
+        return None
+    return ZONE_GROUPINGS.get(f2.get("zoneGrouping"))
+
+
+def get_kaiteki_zone_group(coordinator, zones):
+    """Return the zone group shared by all KAITEKI entities of a coordinator."""
+    group = _ZONE_GROUPS.get(coordinator)
+    if group is None or group.grouping != zones:
+        group = KaitekiZoneGroup(coordinator, zones)
+        _ZONE_GROUPS[coordinator] = group
+    return group
+
 
 def create_kaiteki_climate_entities(coordinator, config):
     """Create KAITEKI climate entities from F2 zoneGrouping."""
-    f2 = coordinator.data.get(0xF2)
-    if not isinstance(f2, dict):
-        return []
-
-    grouping = f2.get("zoneGrouping")
-    zones = ZONE_GROUPINGS.get(grouping)
+    zones = get_kaiteki_zones(coordinator)
     if zones is None:
         return []
 
-    zone_group = KaitekiZoneGroup(coordinator, zones)
+    zone_group = get_kaiteki_zone_group(coordinator, zones)
 
     return [
         EchonetKaitekiClimate(
@@ -309,3 +346,12 @@ def create_kaiteki_climate_entities(coordinator, config):
         )
         for physical_zones in zones
     ]
+
+
+def _main_power_is_on(coordinator) -> bool:
+    """Whether the main power (0x80) is on.
+
+    The decoded value is "on" when pychonet's super class decoder is used and
+    0x30 when the quirk's raw integer decoder is used, so accept both.
+    """
+    return coordinator.data.get(ENL_STATUS) in (DATA_STATE_ON, 0x30)
