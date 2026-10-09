@@ -1,7 +1,7 @@
 [ECHONETLite Platform Custom Component for Home Assistant](https://github.com/scottyphillips/echonetlite_homeassistant)を快適エアリーに対応させようとしています。
 まだ途中です。
 
-現段階では主な値が取れるだけで、設定変更はあまりできません。
+タイマー関係以外は大体扱えるようになりました。
 
 ## 使い方
 [custom_components/echonetlite/quirks/Chofu Seisakusho/MC-38/0130.py](https://raw.githubusercontent.com/tsukumot/echonetlite_homeassistant/refs/heads/master/custom_components/echonetlite/quirks/Chofu%20Seisakusho/MC-38/0130.py)
