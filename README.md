@@ -1,5 +1,5 @@
 [ECHONETLite Platform Custom Component for Home Assistant](https://github.com/scottyphillips/echonetlite_homeassistant)を快適エアリーに対応させようとしています。
-まだ全然途中です。
+まだ途中です。
 
 現段階では主な値が取れるだけで、設定変更はあまりできません。
 
@@ -24,8 +24,8 @@
 - 0xF2の設定値を見て、ゾーンの分け方を判定
 - 1〜3つのゾーンごとにClimateエンティティを生成
   - Climateの運転モードには現在の運転モード（要するにON）かOFF/Keepのみ表示
-  - OFF/Keepの挙動はコントローラーに合わせた
-  - OFFとKeepのどちらなのかがエンティティからは少々わかりにくいが、仕様ということで
+  - OFF/Keepの挙動はコントローラーと同様
+    - 正確には、OFFを送った際に条件が揃うとエアリー側で分岐してKeepを選択するので、それに表示を合わせた
 - 主電源はSwitch、運転モード選択についてはSelectをそれぞれ生成
   - いずれも変更時に全てのZoneの運転がONになるのは**エアリー側の仕様**
   - 気になるならオートメーションなどから対応してください
