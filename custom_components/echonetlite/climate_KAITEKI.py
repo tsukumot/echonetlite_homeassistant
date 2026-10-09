@@ -266,7 +266,12 @@ class EchonetKaitekiClimate(EchonetClimate):
         await self.zone_group.async_set_f1(overrides)
 
     async def async_turn_off(self):
-        """Turn off, or enter Keep when program operation is active."""
+        # OFFを送る。タイマー有効時にkeepへ移行するかは機器側が決める。
+        overrides = {f"zone{zone}Status": "off" for zone in self.zones}
+        await self.zone_group.async_set_f1(overrides)
+
+"""
+        # Turn off, or enter Keep when program operation is active.
         f1 = self.coordinator.data.get(0xF1)
         if not isinstance(f1, dict):
             raise ValueError("Current F1 data is unavailable")
@@ -280,7 +285,7 @@ class EchonetKaitekiClimate(EchonetClimate):
             overrides[f"zone{zone}Status"] = status
 
         await self.zone_group.async_set_f1(overrides)
-
+"""
 
 def create_kaiteki_climate_entities(coordinator, config):
     """Create KAITEKI climate entities from F2 zoneGrouping."""

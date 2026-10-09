@@ -30,28 +30,9 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
         eojgc = entity["instance"]["eojgc"]
         eojcc = entity["instance"]["eojcc"]
         _enl_op_codes = entity["echonetlite"]._enl_op_codes
-        _non_setup_single_entity = NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(
-            eojcc, set()
+        _non_setup_single_entity = set(
+            NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(eojcc, set())
         )
-        
-        if eojgc == 1 and eojcc == 0x30:
-            _LOGGER.error(
-                "========== SELECT B0 CHECK ==========\n"
-                "host=%s\n"
-                "setmap=%s\n"
-                "non_setup=%s\n"
-                "loop_targets=%s",
-                entity["echonetlite"]._host,
-                [hex(x) for x in entity["instance"]["setmap"]],
-                [hex(x) for x in _non_setup_single_entity],
-                [
-                    hex(x)
-                    for x in (
-                        set(entity["instance"]["setmap"])
-                        - _non_setup_single_entity
-                    )
-                ],
-            )
 
         # configure select entities by looking up full ENL_OP_CODE dict
         for op_code in list(
