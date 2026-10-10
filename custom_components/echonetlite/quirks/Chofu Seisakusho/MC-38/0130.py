@@ -254,7 +254,7 @@ QUIRKS = {
         "ENL_OP_CODE": {
           CONF_NAME: "Preferences",
           TYPE_DATA_DICT: [
-          #    'zoneGrouping',
+              #'zoneGrouping',
           ],
         }
     },
