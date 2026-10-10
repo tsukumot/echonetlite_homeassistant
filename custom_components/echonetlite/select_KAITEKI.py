@@ -1,4 +1,5 @@
 """KAITEKI per-zone program operation select entities."""
+
 import logging
 
 from homeassistant.components.select import SelectEntity

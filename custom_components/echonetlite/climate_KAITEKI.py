@@ -1,4 +1,5 @@
 """KAITEKI multi-zone climate entities."""
+
 import logging
 import asyncio
 import time
@@ -11,10 +12,7 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE
-from pychonet.HomeAirConditioner import ( 
-  ENL_HVAC_MODE,
-  ENL_STATUS
-)
+from pychonet.HomeAirConditioner import ENL_HVAC_MODE, ENL_STATUS
 from .climate import EchonetClimate
 from .connectors import _host_semaphores
 from .const import DATA_STATE_ON
@@ -106,17 +104,21 @@ class KaitekiZoneGroup:
             if airflow not in AIRFLOW_TO_BYTE:
                 raise HomeAssistantError(f"Unknown zone{zone}AirFlow: {airflow!r}")
             if program not in PROGRAM_OPERATION_TO_BYTE:
-                raise HomeAssistantError(f"Unknown zone{zone}ProgramOperation: {program!r}")
+                raise HomeAssistantError(
+                    f"Unknown zone{zone}ProgramOperation: {program!r}"
+                )
             if temp is None or any(u is None for u in unknowns):
                 raise HomeAssistantError(f"Incomplete F1 data for zone {zone}")
 
-            edt.extend((
-                STATUS_TO_BYTE[status],
-                int(temp),
-                AIRFLOW_TO_BYTE[airflow],
-                *unknowns,
-                PROGRAM_OPERATION_TO_BYTE[program],
-            ))
+            edt.extend(
+                (
+                    STATUS_TO_BYTE[status],
+                    int(temp),
+                    AIRFLOW_TO_BYTE[airflow],
+                    *unknowns,
+                    PROGRAM_OPERATION_TO_BYTE[program],
+                )
+            )
         return bytes(edt), merged  # 21 bytes
 
     async def async_set_f1(self, overrides=None):
@@ -290,7 +292,7 @@ class EchonetKaitekiClimate(EchonetClimate):
     def hvac_mode(self):
         if self._zone_value("Status") == "on":
             return self._MODE_B0.get(self.coordinator.data.get(0xB0))
-        return HVACMode.OFF 
+        return HVACMode.OFF
 
     @property
     def hvac_modes(self):
@@ -322,7 +324,7 @@ class EchonetKaitekiClimate(EchonetClimate):
     @property
     def extra_state_attributes(self):
         attrs = dict(super().extra_state_attributes or {})
-        attrs["zone_status"] = self._zone_value("Status")   # on / off / keep
+        attrs["zone_status"] = self._zone_value("Status")  # on / off / keep
         attrs["zone_program_operation"] = self.zone_program_operation
         return attrs
 
@@ -361,11 +363,12 @@ class EchonetKaitekiClimate(EchonetClimate):
         overrides = {f"zone{zone}Status": "off" for zone in self.zones}
         await self.zone_group.async_set_f1(overrides)
 
+
 # Supported KAITEKI units. These values mirror the quirks directory layout
 # (quirks/<manufacturer>/<product code>/0130.py) used by connectors.py.
 KAITEKI_MANUFACTURER = "Chofu Seisakusho"
 KAITEKI_PRODUCT_CODES = {
-  "MC-38",
+    "MC-38",
 }
 
 
