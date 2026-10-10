@@ -1,4 +1,3 @@
-#快適エアリー
 #import logging
 #_LOGGER = logging.getLogger(__name__)
 
@@ -8,18 +7,13 @@ from homeassistant.components.sensor.const import (
     SensorStateClass,
 )
 from homeassistant.components.climate.const import (
-    ClimateEntityFeature,
     HVACAction,
     HVACMode,
     ATTR_HVAC_MODE,
 )
-from homeassistant.components.number.const import (
-    NumberDeviceClass,
-)
 from homeassistant.const import (
     CONF_NAME,
     CONF_TYPE,
-    CONF_UNIT_OF_MEASUREMENT,
     CONF_ICON,
     CONF_SERVICE_DATA,
 )
@@ -28,16 +22,9 @@ from ....const import (
     TYPE_DATA_DICT,
     TYPE_SELECT,
     TYPE_SWITCH,
-    CONF_SERVICE_DATA,
     CONF_DISABLED_DEFAULT,
 )
 from ....sensor import EchonetSensor
-
-def _hex(edt):
-    try:
-      return edt.hex()
-    except Exception:
-      return None
 
 def _0130F0(edt):
     return _int(edt[1:2], {
@@ -110,7 +97,7 @@ def _0130F1(edt):
           0x32: "timer2",
           0x33: "timer3",
         })
-    except:
+    except Exception:
         pass
     return {
       "zone1Status": z1p,
@@ -151,7 +138,7 @@ def _0130FA(edt):
         u2 = _int(edt[4:5])
         ot = _int(edt[5:6])
         u3 = _int(edt[6:7])
-    except:
+    except Exception:
         pass
     return {
       "zone1Temp": t1,

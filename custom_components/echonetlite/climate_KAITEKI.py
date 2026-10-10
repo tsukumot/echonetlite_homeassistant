@@ -2,7 +2,7 @@
 import logging
 import asyncio
 import time
-from weakref import WeakKeyDictionary
+
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
@@ -62,11 +62,11 @@ F1_READBACK_TRIES = 3
 # (possibly stale) F1 read, so the next read-modify-write cannot revert them.
 F1_SETTLE_TIME = 5.0
 
+
 class KaitekiZoneGroup:
     def __init__(self, coordinator, grouping):
         self.coordinator = coordinator
         self.grouping = grouping
-        self.entities = []
         self._lock = asyncio.Lock()
         # Overrides and callers waiting for the next F1 write.
         self._pending = {}
@@ -75,9 +75,6 @@ class KaitekiZoneGroup:
         # Decoded F1 values of the last frame we sent, and when.
         self._last_sent = {}
         self._last_sent_at = 0.0
-
-    def add(self, entity):
-        self.entities.append(entity)
 
     def _base_f1(self):
         """Return the F1 dict to start a read-modify-write from."""
@@ -224,6 +221,7 @@ class KaitekiZoneGroup:
                     self._last_sent = {}
                     break
 
+
 class EchonetKaitekiClimate(EchonetClimate):
     """Climate entity representing one KAITEKI zone group."""
 
@@ -237,7 +235,6 @@ class EchonetKaitekiClimate(EchonetClimate):
         super().__init__(coordinator, config)
         self.zones = tuple(zones)
         self.zone_group = zone_group
-        zone_group.add(self)
 
         zone_name = "+".join(str(zone) for zone in self.zones)
         self._attr_name = f"{self._device_name} Zone {zone_name}"
@@ -286,33 +283,6 @@ class EchonetKaitekiClimate(EchonetClimate):
     def is_on(self):
         return self._zone_value("Status") == "on"
 
-    def _operation_hvac_mode(self):
-        """Return the current common 0xB0 operation mode as an HA HVAC mode."""
-        value = self.coordinator.data.get(0xB0)
-
-        # The normal decoder supplies the symbolic value.  Accept the raw EPC
-        # values too, so this remains usable if a device/decoder exposes bytes.
-        if isinstance(value, dict):
-            value = value.get("value", value.get("mode"))
-        if isinstance(value, (bytes, bytearray)) and value:
-            value = value[0]
-
-        if isinstance(value, str):
-            normalized = value.lower().replace("-", "_").replace(" ", "_")
-            return {
-                "auto": HVACMode.HEAT_COOL,
-                "cooling": HVACMode.COOL,
-                "heating": HVACMode.HEAT,
-                "dehumidification": HVACMode.DRY,
-            }.get(normalized)
-
-        return {
-            0x41: HVACMode.HEAT_COOL,
-            0x42: HVACMode.COOL,
-            0x43: HVACMode.HEAT,
-            0x44: HVACMode.DRY,
-        }.get(value)
-
     @property
     def hvac_mode(self):
         if self._zone_value("Status") == "on":
@@ -331,7 +301,7 @@ class EchonetKaitekiClimate(EchonetClimate):
         if hvac_mode == HVACMode.OFF:
             await self.async_turn_off()
         else:
-            await self.async_turn_on()   # 0xB0 は触らない
+            await self.async_turn_on()
 
     @property
     def hvac_action(self):
@@ -388,16 +358,13 @@ class EchonetKaitekiClimate(EchonetClimate):
         overrides = {f"zone{zone}Status": "off" for zone in self.zones}
         await self.zone_group.async_set_f1(overrides)
 
-# One shared KaitekiZoneGroup per coordinator, so every platform (climate,
-# select) serialises its read-modify-write of EPC 0xF1 through the same lock.
-_ZONE_GROUPS: "WeakKeyDictionary" = WeakKeyDictionary()
-
 # Supported KAITEKI units. These values mirror the quirks directory layout
 # (quirks/<manufacturer>/<product code>/0130.py) used by connectors.py.
-KAITEKI_MANUFACTURER = "Chofu Seisakusho"          # fill in the manufacturer string
+KAITEKI_MANUFACTURER = "Chofu Seisakusho"
 KAITEKI_PRODUCT_CODES = {
   "MC-38",
-} # fill in the product code(s)
+}
+
 
 def is_kaiteki(coordinator) -> bool:
     """Whether this coordinator is a supported KAITEKI air conditioner.
@@ -424,10 +391,10 @@ def get_kaiteki_zones(coordinator):
 
 def get_kaiteki_zone_group(coordinator, zones):
     """Return the zone group shared by all KAITEKI entities of a coordinator."""
-    group = _ZONE_GROUPS.get(coordinator)
+    group = getattr(coordinator, "_kaiteki_zone_group", None)
     if group is None or group.grouping != zones:
         group = KaitekiZoneGroup(coordinator, zones)
-        _ZONE_GROUPS[coordinator] = group
+        coordinator._kaiteki_zone_group = group
     return group
 
 
