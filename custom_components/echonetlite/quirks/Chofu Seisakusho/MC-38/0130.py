@@ -216,6 +216,7 @@ QUIRKS = {
     },
     0xF1: {
         "EPC_FUNCTION": _0130F1,
+        "ALWAYS_POLL": True,
         "ENL_OP_CODE": {
           CONF_NAME: "Zone Configuration",
           TYPE_DATA_DICT: [
