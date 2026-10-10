@@ -41,7 +41,6 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
         # configure select entities by looking up full ENL_OP_CODE dict
         for op_code in list(
             set(entity["instance"]["setmap"])
-            #- NON_SETUP_SINGLE_ENTITY.get(eojgc, {}).get(eojcc, set())
         ):
             coordinator = entity["echonetlite"]
             if (
