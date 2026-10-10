@@ -282,9 +282,13 @@ class EchonetKaitekiClimate(EchonetClimate):
         await self.zone_group.async_set_f1(overrides)
 
     async def async_turn_off(self):
+        """Turn off this zone group, or park it as keep when a timer is active."""
         # With the main power off every zone is already off
         if not _main_power_is_on(self.coordinator):
             return
+
+        overrides = {f"zone{zone}Status": "off" for zone in self.zones}
+        await self.zone_group.async_set_f1(overrides)
 
 # One shared KaitekiZoneGroup per coordinator, so every platform (climate,
 # select) serialises its read-modify-write of EPC 0xF1 through the same lock.

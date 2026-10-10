@@ -217,6 +217,10 @@ class ECHONETConnector(DataUpdateCoordinator[dict]):
         self._update_callbacks: list[callable] = []
         self._update_option_func: list[callable] = []
 
+        # EPCs that must stay in the regular poll even if they are in the
+        # notification map (set by quirks, e.g. changes made by a device timer).
+        self._always_poll_epcs: set[int] = set()
+
         # User configurable options (fan modes, swing modes, temperature ranges, etc.)
         self._user_options: dict[str, Any] = {}
 
@@ -1058,6 +1062,9 @@ class ECHONETConnector(DataUpdateCoordinator[dict]):
             # even if multicast notifications cannot traverse the device VLAN.
             _ntf_set.discard(0xF3)
 
+        # Quirk-requested EPCs are polled every cycle regardless of push coverage.
+        _ntf_set -= self._always_poll_epcs
+
         if _ntf_set:
             _pruned = [
                 e
@@ -1142,6 +1149,9 @@ class ECHONETConnector(DataUpdateCoordinator[dict]):
                     self._instance.register_epc_function(epc, func, op_code)
                     if op_code:
                         self._enl_op_codes.update({epc: op_code})
+
+                if extention.QUIRKS[epc].get("ALWAYS_POLL"):
+                    self._always_poll_epcs.add(epc)
                 if extention.QUIRKS[epc].get("SINGLETON_POLL"):
                     if epc not in self._singleton_poll_epcs:
                         self._singleton_poll_epcs.append(epc)
