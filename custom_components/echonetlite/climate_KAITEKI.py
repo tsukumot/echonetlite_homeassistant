@@ -239,11 +239,9 @@ class EchonetKaitekiClimate(EchonetClimate):
         zone_name = "+".join(str(zone) for zone in self.zones)
         self._attr_name = f"{self._device_name} Zone {zone_name}"
         self._attr_unique_id = self._build_unique_id(f"zone-{zone_name}")
-
-        # KAITEKI airflow is carried by 0xF1 rather than the standard
-        # ECHONET fan-speed EPC.
+        # KAITEKI airflow is carried by 0xF1, so FAN_MODE must be enabled
+        # explicitly even when 0xA0 is not in the set map
         self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
-        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     def _zone_value(self, suffix):
         """Return a value for the first physical zone in this group."""
@@ -251,6 +249,11 @@ class EchonetKaitekiClimate(EchonetClimate):
         if not isinstance(f1, dict):
             return None
         return f1.get(f"zone{self.zones[0]}{suffix}")
+
+    def update_option_listener(self):
+        super().update_option_listener()
+        # KAITEKI airflow comes from 0xF1, not from the standard fan EPC
+        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     @property
     def current_temperature(self):
