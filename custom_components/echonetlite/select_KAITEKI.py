@@ -1,16 +1,16 @@
 """KAITEKI per-zone program operation select entities."""
+
 import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.exceptions import HomeAssistantError
-from pychonet.HomeAirConditioner import ENL_STATUS
 
-from .const import DATA_STATE_ON
 from .base_entity import EchonetEntity
 from .climate_KAITEKI import (
     PROGRAM_OPERATION_TO_BYTE,
     get_kaiteki_zone_group,
     get_kaiteki_zones,
+    _main_power_is_on,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class EchonetKaitekiProgramSelect(EchonetEntity, SelectEntity):
             raise HomeAssistantError(f"Unsupported program operation: {option}")
         # The unit acknowledges F1 writes but silently ignores program operation
         # changes while the main power (0x80) is off.
-        if self.coordinator.data.get(ENL_STATUS) != DATA_STATE_ON:
+        if not _main_power_is_on(self.coordinator):
             raise HomeAssistantError(
                 "Program operation can only be changed while the main power is on"
             )

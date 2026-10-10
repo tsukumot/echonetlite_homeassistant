@@ -1,8 +1,9 @@
 """KAITEKI multi-zone climate entities."""
+
 import logging
 import asyncio
 import time
-from weakref import WeakKeyDictionary
+
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
@@ -11,10 +12,7 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE
-from pychonet.HomeAirConditioner import ( 
-  ENL_HVAC_MODE,
-  ENL_STATUS
-)
+from pychonet.HomeAirConditioner import ENL_HVAC_MODE, ENL_STATUS
 from .climate import EchonetClimate
 from .connectors import _host_semaphores
 from .const import DATA_STATE_ON
@@ -62,11 +60,11 @@ F1_READBACK_TRIES = 3
 # (possibly stale) F1 read, so the next read-modify-write cannot revert them.
 F1_SETTLE_TIME = 5.0
 
+
 class KaitekiZoneGroup:
     def __init__(self, coordinator, grouping):
         self.coordinator = coordinator
         self.grouping = grouping
-        self.entities = []
         self._lock = asyncio.Lock()
         # Overrides and callers waiting for the next F1 write.
         self._pending = {}
@@ -75,9 +73,6 @@ class KaitekiZoneGroup:
         # Decoded F1 values of the last frame we sent, and when.
         self._last_sent = {}
         self._last_sent_at = 0.0
-
-    def add(self, entity):
-        self.entities.append(entity)
 
     def _base_f1(self):
         """Return the F1 dict to start a read-modify-write from."""
@@ -109,17 +104,21 @@ class KaitekiZoneGroup:
             if airflow not in AIRFLOW_TO_BYTE:
                 raise HomeAssistantError(f"Unknown zone{zone}AirFlow: {airflow!r}")
             if program not in PROGRAM_OPERATION_TO_BYTE:
-                raise HomeAssistantError(f"Unknown zone{zone}ProgramOperation: {program!r}")
+                raise HomeAssistantError(
+                    f"Unknown zone{zone}ProgramOperation: {program!r}"
+                )
             if temp is None or any(u is None for u in unknowns):
                 raise HomeAssistantError(f"Incomplete F1 data for zone {zone}")
 
-            edt.extend((
-                STATUS_TO_BYTE[status],
-                int(temp),
-                AIRFLOW_TO_BYTE[airflow],
-                *unknowns,
-                PROGRAM_OPERATION_TO_BYTE[program],
-            ))
+            edt.extend(
+                (
+                    STATUS_TO_BYTE[status],
+                    int(temp),
+                    AIRFLOW_TO_BYTE[airflow],
+                    *unknowns,
+                    PROGRAM_OPERATION_TO_BYTE[program],
+                )
+            )
         return bytes(edt), merged  # 21 bytes
 
     async def async_set_f1(self, overrides=None):
@@ -224,6 +223,7 @@ class KaitekiZoneGroup:
                     self._last_sent = {}
                     break
 
+
 class EchonetKaitekiClimate(EchonetClimate):
     """Climate entity representing one KAITEKI zone group."""
 
@@ -237,16 +237,13 @@ class EchonetKaitekiClimate(EchonetClimate):
         super().__init__(coordinator, config)
         self.zones = tuple(zones)
         self.zone_group = zone_group
-        zone_group.add(self)
 
         zone_name = "+".join(str(zone) for zone in self.zones)
         self._attr_name = f"{self._device_name} Zone {zone_name}"
         self._attr_unique_id = self._build_unique_id(f"zone-{zone_name}")
-
-        # KAITEKI airflow is carried by 0xF1 rather than the standard
-        # ECHONET fan-speed EPC.
+        # KAITEKI airflow is carried by 0xF1, so FAN_MODE must be enabled
+        # explicitly even when 0xA0 is not in the set map
         self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
-        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     def _zone_value(self, suffix):
         """Return a value for the first physical zone in this group."""
@@ -254,6 +251,11 @@ class EchonetKaitekiClimate(EchonetClimate):
         if not isinstance(f1, dict):
             return None
         return f1.get(f"zone{self.zones[0]}{suffix}")
+
+    def update_option_listener(self):
+        super().update_option_listener()
+        # KAITEKI airflow comes from 0xF1, not from the standard fan EPC
+        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     @property
     def current_temperature(self):
@@ -286,38 +288,11 @@ class EchonetKaitekiClimate(EchonetClimate):
     def is_on(self):
         return self._zone_value("Status") == "on"
 
-    def _operation_hvac_mode(self):
-        """Return the current common 0xB0 operation mode as an HA HVAC mode."""
-        value = self.coordinator.data.get(0xB0)
-
-        # The normal decoder supplies the symbolic value.  Accept the raw EPC
-        # values too, so this remains usable if a device/decoder exposes bytes.
-        if isinstance(value, dict):
-            value = value.get("value", value.get("mode"))
-        if isinstance(value, (bytes, bytearray)) and value:
-            value = value[0]
-
-        if isinstance(value, str):
-            normalized = value.lower().replace("-", "_").replace(" ", "_")
-            return {
-                "auto": HVACMode.HEAT_COOL,
-                "cooling": HVACMode.COOL,
-                "heating": HVACMode.HEAT,
-                "dehumidification": HVACMode.DRY,
-            }.get(normalized)
-
-        return {
-            0x41: HVACMode.HEAT_COOL,
-            0x42: HVACMode.COOL,
-            0x43: HVACMode.HEAT,
-            0x44: HVACMode.DRY,
-        }.get(value)
-
     @property
     def hvac_mode(self):
         if self._zone_value("Status") == "on":
             return self._MODE_B0.get(self.coordinator.data.get(0xB0))
-        return HVACMode.OFF 
+        return HVACMode.OFF
 
     @property
     def hvac_modes(self):
@@ -331,7 +306,7 @@ class EchonetKaitekiClimate(EchonetClimate):
         if hvac_mode == HVACMode.OFF:
             await self.async_turn_off()
         else:
-            await self.async_turn_on()   # 0xB0 は触らない
+            await self.async_turn_on()
 
     @property
     def hvac_action(self):
@@ -349,7 +324,7 @@ class EchonetKaitekiClimate(EchonetClimate):
     @property
     def extra_state_attributes(self):
         attrs = dict(super().extra_state_attributes or {})
-        attrs["zone_status"] = self._zone_value("Status")   # on / off / keep
+        attrs["zone_status"] = self._zone_value("Status")  # on / off / keep
         attrs["zone_program_operation"] = self.zone_program_operation
         return attrs
 
@@ -388,16 +363,14 @@ class EchonetKaitekiClimate(EchonetClimate):
         overrides = {f"zone{zone}Status": "off" for zone in self.zones}
         await self.zone_group.async_set_f1(overrides)
 
-# One shared KaitekiZoneGroup per coordinator, so every platform (climate,
-# select) serialises its read-modify-write of EPC 0xF1 through the same lock.
-_ZONE_GROUPS: "WeakKeyDictionary" = WeakKeyDictionary()
 
 # Supported KAITEKI units. These values mirror the quirks directory layout
 # (quirks/<manufacturer>/<product code>/0130.py) used by connectors.py.
-KAITEKI_MANUFACTURER = "Chofu Seisakusho"          # fill in the manufacturer string
+KAITEKI_MANUFACTURER = "Chofu Seisakusho"
 KAITEKI_PRODUCT_CODES = {
-  "MC-38",
-} # fill in the product code(s)
+    "MC-38",
+}
+
 
 def is_kaiteki(coordinator) -> bool:
     """Whether this coordinator is a supported KAITEKI air conditioner.
@@ -424,10 +397,10 @@ def get_kaiteki_zones(coordinator):
 
 def get_kaiteki_zone_group(coordinator, zones):
     """Return the zone group shared by all KAITEKI entities of a coordinator."""
-    group = _ZONE_GROUPS.get(coordinator)
+    group = getattr(coordinator, "_kaiteki_zone_group", None)
     if group is None or group.grouping != zones:
         group = KaitekiZoneGroup(coordinator, zones)
-        _ZONE_GROUPS[coordinator] = group
+        coordinator._kaiteki_zone_group = group
     return group
 
 
