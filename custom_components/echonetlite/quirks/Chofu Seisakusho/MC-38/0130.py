@@ -1,9 +1,6 @@
 #快適エアリー
 #import logging
 #_LOGGER = logging.getLogger(__name__)
-from pathlib import Path
-additional = Path(__file__).resolve().parent.name == "MC-38"
-#additional = False
 
 from homeassistant.components.sensor.const import (
     CONF_STATE_CLASS,
@@ -144,9 +141,6 @@ def _0130F2(edt):
       "zoneGrouping": _int(edt[0:1])
     }
 
-def _0130F4(edt):
-    return _hex
-
 def _0130FA(edt):
     t1 = t2 = t3 = ot = u1 = u2 = u3 = None
     try:
@@ -194,7 +188,7 @@ QUIRKS = {
         "EPC_FUNCTION": _int,
         "ENL_OP_CODE": {
             CONF_NAME: "Operation mode setting",
-#            CONF_ICON: "mdi:air-humidifier",
+            CONF_ICON: "mdi:air-conditioner",
             TYPE_SELECT: {
                "Cooling": 0x42,
                "Heating": 0x43,
@@ -259,19 +253,9 @@ QUIRKS = {
         "EPC_FUNCTION": _0130F2,
         "ENL_OP_CODE": {
           CONF_NAME: "Preferences",
-          TYPE_DATA_DICT: [
+#          TYPE_DATA_DICT: [
 #              'zoneGrouping',
-          ],
-        }
-    },
-    0xF4: {
-        "EPC_FUNCTION": _0130F4,
-        "ENL_OP_CODE": {
-          CONF_NAME: "Timer Settings",
-          TYPE_DATA_DICT: [
-              'heatingTimerSetting',
-              'coolingTimerSetting',
-          ],
+#          ],
         }
     },
     0xFA: {
@@ -293,9 +277,3 @@ QUIRKS = {
         },
     },
 }
-"""
-if additional:
-  QUIRKS.0xF2.ENL_OP_CODE.TYPE_DATA_DICT.update([
-              'zoneGrouping',
-    ])
-"""
