@@ -32,6 +32,7 @@ from ....const import (
     TYPE_SELECT,
     TYPE_SWITCH,
     CONF_SERVICE_DATA,
+    CONF_DISABLED_DEFAULT,
 )
 from ....sensor import EchonetSensor
 
@@ -140,9 +141,11 @@ def _0130F1(edt):
 
 def _0130F2(edt):
     return {
-      #0x30:off, 0x31:ab, 0x32:ac, 0x33:bc, 0x34:abc
       "zoneGrouping": _int(edt[0:1])
     }
+
+def _0130F4(edt):
+    return _hex
 
 def _0130FA(edt):
     t1 = t2 = t3 = ot = u1 = u2 = u3 = None
@@ -177,6 +180,14 @@ QUIRKS = {
                 "on": 0x30,
                 "off": 0x31
             },
+        },
+    },
+    0x8F: {
+        # Required: ENL_OP_CODE is only applied when EPC_FUNCTION is present
+        "EPC_FUNCTION": _int,
+        "ENL_OP_CODE": {
+            CONF_NAME: "Power-saving operation setting",
+            CONF_DISABLED_DEFAULT: True,
         },
     },
     0xB0: {
@@ -247,9 +258,19 @@ QUIRKS = {
     0xF2: {
         "EPC_FUNCTION": _0130F2,
         "ENL_OP_CODE": {
-          CONF_NAME: "Setting",
+          CONF_NAME: "Preferences",
           TYPE_DATA_DICT: [
-              'zoneGrouping',
+#              'zoneGrouping',
+          ],
+        }
+    },
+    0xF4: {
+        "EPC_FUNCTION": _0130F4,
+        "ENL_OP_CODE": {
+          CONF_NAME: "Timer Settings",
+          TYPE_DATA_DICT: [
+              'heatingTimerSetting',
+              'coolingTimerSetting',
           ],
         }
     },

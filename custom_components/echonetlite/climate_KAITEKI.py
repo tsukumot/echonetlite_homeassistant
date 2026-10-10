@@ -1,6 +1,7 @@
 """KAITEKI multi-zone climate entities."""
 import logging
 import asyncio
+import time
 from weakref import WeakKeyDictionary
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.climate.const import (
@@ -14,11 +15,12 @@ from pychonet.HomeAirConditioner import (
   ENL_HVAC_MODE,
   ENL_STATUS
 )
+from .climate import EchonetClimate
+from .connectors import _host_semaphores
 from .const import DATA_STATE_ON
 
-from .climate import EchonetClimate
-
 _LOGGER = logging.getLogger(__name__)
+
 ZONE_GROUPINGS = {
     # 0x30: zone 1 / zone 2 / zone 3
     # 0x31: zone 1+2 / zone 3
@@ -31,25 +33,34 @@ ZONE_GROUPINGS = {
     0x33: ((1,), (2, 3)),
     0x34: ((1, 2, 3),),
 }
-
 STATUS_TO_BYTE = {
     "off": 0x30,
     "on": 0x31,
     "keep": 0x32,
 }
-
 AIRFLOW_TO_BYTE = {
     "low": 0x31,
     "high": 0x32,
     "auto": 0x41,
 }
-
 PROGRAM_OPERATION_TO_BYTE = {
     "off": 0x30,
     "timer1": 0x31,
     "timer2": 0x32,
     "timer3": 0x33,
 }
+# Calls arriving within this window are merged into a single F1 frame
+# (e.g. an automation touching several zones at once).
+F1_COALESCE_DELAY = 0.2
+# SET is retried when the device queue is busy (e.g. a poll is in flight).
+F1_SET_RETRIES = 3
+F1_RETRY_DELAY = 0.5
+# Read back until the device reports the values we just wrote.
+F1_READBACK_DELAY = 0.5
+F1_READBACK_TRIES = 3
+# For this long after a write, the values we sent are trusted over a
+# (possibly stale) F1 read, so the next read-modify-write cannot revert them.
+F1_SETTLE_TIME = 5.0
 
 class KaitekiZoneGroup:
     def __init__(self, coordinator, grouping):
@@ -57,29 +68,41 @@ class KaitekiZoneGroup:
         self.grouping = grouping
         self.entities = []
         self._lock = asyncio.Lock()
+        # Overrides and callers waiting for the next F1 write.
+        self._pending = {}
+        self._waiters = []
+        self._flush_scheduled = False
+        # Decoded F1 values of the last frame we sent, and when.
+        self._last_sent = {}
+        self._last_sent_at = 0.0
 
     def add(self, entity):
         self.entities.append(entity)
 
-    def _build_f1(self, overrides=None):
-        """現在のF1(0130.pyのデコード結果)をベースに、上書き分だけ変えて21バイト化する。"""
-        overrides = overrides or {}
+    def _base_f1(self):
+        """Return the F1 dict to start a read-modify-write from."""
         f1 = self.coordinator.data.get(0xF1)
         if not isinstance(f1, dict):
             raise HomeAssistantError("F1 data is unavailable")
+        if self._last_sent and time.monotonic() - self._last_sent_at < F1_SETTLE_TIME:
+            # The device may not have applied our last write yet.
+            return {**f1, **self._last_sent}
+        return f1
+
+    def _build_f1(self, overrides):
+        """Apply overrides to the base F1 and encode it as 21 bytes.
+
+        Returns (edt, merged) where merged is the decoded form of edt.
+        """
+        merged = {**self._base_f1(), **overrides}
 
         edt = bytearray()
         for zone in (1, 2, 3):
-            def pick(suffix):
-                key = f"zone{zone}{suffix}"
-                value = overrides.get(key)
-                return f1.get(key) if value is None else value
-
-            status = pick("Status")
-            temp = pick("TargetTemp")
-            airflow = pick("AirFlow")
-            program = pick("ProgramOperation")
-            unknowns = [f1.get(f"unknown{zone}-{i}") for i in (1, 2, 3)]
+            status = merged.get(f"zone{zone}Status")
+            temp = merged.get(f"zone{zone}TargetTemp")
+            airflow = merged.get(f"zone{zone}AirFlow")
+            program = merged.get(f"zone{zone}ProgramOperation")
+            unknowns = [merged.get(f"unknown{zone}-{i}") for i in (1, 2, 3)]
 
             if status not in STATUS_TO_BYTE:
                 raise HomeAssistantError(f"Unknown zone{zone}Status: {status!r}")
@@ -97,9 +120,10 @@ class KaitekiZoneGroup:
                 *unknowns,
                 PROGRAM_OPERATION_TO_BYTE[program],
             ))
-        return bytes(edt)  # 21 bytes
+        return bytes(edt), merged  # 21 bytes
 
     async def async_set_f1(self, overrides=None):
+        """Queue overrides; calls made close together share one F1 write."""
         # The unit acknowledges F1 writes but silently ignores them while the
         # main power (0x80) is off. Turning the main power on would switch on
         # every zone, so it is left to the user (main power switch) instead.
@@ -108,23 +132,97 @@ class KaitekiZoneGroup:
                 "KAITEKI main power is off; turn it on before changing zones"
             )
 
+        overrides = {k: v for k, v in (overrides or {}).items() if v is not None}
+        if not overrides:
+            return
+
+        future = asyncio.get_running_loop().create_future()
+        # Later calls win for the same key.
+        self._pending.update(overrides)
+        self._waiters.append(future)
+        if not self._flush_scheduled:
+            self._flush_scheduled = True
+            self.coordinator.hass.async_create_task(self._flush())
+        await future
+
+    async def _flush(self):
+        """Wait briefly for more calls, then write everything in one frame."""
+        await asyncio.sleep(F1_COALESCE_DELAY)
         async with self._lock:
-            edt = self._build_f1(overrides)
-            _LOGGER.debug("KAITEKI F1 SET overrides=%s edt=%s", overrides, edt.hex())
-            ok = await self.coordinator._instance.setMessage(
-                0xF1, int.from_bytes(edt, "big"), pdc=len(edt)
+            # Calls arriving from now on form the next batch.
+            overrides, waiters = self._pending, self._waiters
+            self._pending, self._waiters = {}, []
+            self._flush_scheduled = False
+
+            error = None
+            try:
+                await self._write(overrides)
+            except Exception as err:  # propagate to every waiting caller
+                error = err
+
+            for future in waiters:
+                # A caller may have been cancelled while waiting.
+                if future.done():
+                    continue
+                if error is None:
+                    future.set_result(None)
+                else:
+                    future.set_exception(error)
+
+    async def _write(self, overrides):
+        coordinator = self.coordinator
+        # Power may have been turned off while this batch was waiting.
+        if not _main_power_is_on(coordinator):
+            raise HomeAssistantError(
+                "KAITEKI main power is off; turn it on before changing zones"
             )
-            _LOGGER.debug("KAITEKI F1 SET ack=%s", ok)
-            if not ok:
+
+        edt, merged = self._build_f1(overrides)
+        _LOGGER.debug("KAITEKI F1 SET overrides=%s edt=%s", overrides, edt.hex())
+
+        # Share the per-host semaphore with polling so a SET never collides
+        # with a poll cycle on the same device.
+        semaphore = _host_semaphores.setdefault(coordinator._host, asyncio.Semaphore(1))
+        async with semaphore:
+            for attempt in range(1, F1_SET_RETRIES + 1):
+                try:
+                    ok = await coordinator._instance.setMessage(
+                        0xF1, int.from_bytes(edt, "big"), pdc=len(edt)
+                    )
+                except TimeoutError:
+                    ok = False
+                _LOGGER.debug("KAITEKI F1 SET ack=%s (attempt %s)", ok, attempt)
+                if ok:
+                    break
+                await asyncio.sleep(F1_RETRY_DELAY)
+            else:
                 raise HomeAssistantError("KAITEKI did not acknowledge F1")
 
-            await asyncio.sleep(0.5)
-            confirmed = await self.coordinator.poll_pychonet_specific([0xF1])
-            _LOGGER.debug("KAITEKI F1 readback=%s", confirmed)
-            if confirmed:
-                self.coordinator.async_set_updated_data(
-                    {**(self.coordinator.data or {}), **confirmed}
+            self._last_sent = merged
+            self._last_sent_at = time.monotonic()
+            # Optimistic update so the UI follows immediately.
+            coordinator.async_set_updated_data(
+                {**(coordinator.data or {}), 0xF1: dict(merged)}
+            )
+
+            # Read back until the device reports what we wrote.
+            for _ in range(F1_READBACK_TRIES):
+                await asyncio.sleep(F1_READBACK_DELAY)
+                try:
+                    confirmed = await coordinator.poll_pychonet_specific([0xF1])
+                except TimeoutError:
+                    continue
+                _LOGGER.debug("KAITEKI F1 readback=%s", confirmed)
+                actual = confirmed.get(0xF1) if confirmed else None
+                if not isinstance(actual, dict):
+                    continue
+                coordinator.async_set_updated_data(
+                    {**(coordinator.data or {}), **confirmed}
                 )
+                if all(actual.get(k) == v for k, v in merged.items()):
+                    # Device applied everything; no need to trust the cache.
+                    self._last_sent = {}
+                    break
 
 class EchonetKaitekiClimate(EchonetClimate):
     """Climate entity representing one KAITEKI zone group."""
