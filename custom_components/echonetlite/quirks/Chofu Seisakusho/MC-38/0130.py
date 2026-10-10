@@ -253,9 +253,9 @@ QUIRKS = {
         "EPC_FUNCTION": _0130F2,
         "ENL_OP_CODE": {
           CONF_NAME: "Preferences",
-          #TYPE_DATA_DICT: [
-          #    'zoneGrouping',
-          #],
+          TYPE_DATA_DICT: [
+              #'zoneGrouping',
+          ],
         }
     },
     0xFA: {
