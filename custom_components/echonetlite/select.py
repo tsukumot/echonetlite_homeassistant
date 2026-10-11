@@ -52,10 +52,10 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
             epc_function_data = entity["echonetlite"]._instance.EPC_FUNCTIONS.get(
                 op_code, None
             )
-            
+
             # Exclude EPCs containing TYPE_SELECT from the exclusion list using quirk
             _enl_op_code_dict = _enl_op_codes.get(op_code, {})
-            if TYPE_SELECT in _enl_op_code_dict: 
+            if TYPE_SELECT in _enl_op_code_dict:
                 _non_setup_single_entity.discard(op_code)
 
             if op_code in _non_setup_single_entity:
