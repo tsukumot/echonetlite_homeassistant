@@ -27,14 +27,27 @@ from ....const import (
 from ....sensor import EchonetSensor
 
 
-def _0130F0(edt):
-    return _int(
+def _0130F0(edt)
+    F01 = F02 = F03 = F04 = None
+    try:
+      F01 = _int(edt[0:1])
+      F02 = _int(
         edt[1:2],
         {
             0x30: "off",
             0x31: "on",
         },
-    )
+      )
+      F03 = _int(edt[2:3])
+      F04 = _int(edt[3:4])
+      except Exception:
+        pass
+    return {
+        "unknown1": F01,
+        "zone1Status": F02,
+        "unknown2": F03,
+        "unknown3": F04,
+    }
 
 
 def _0130F1(edt):
@@ -229,11 +242,7 @@ QUIRKS = {
         "EPC_FUNCTION": _0130F0,
         "ENL_OP_CODE": {
             CONF_NAME: "Away Mode",
-            CONF_ICON: "mdi:walk",
-            TYPE_SELECT: {
-                "off": 0x30,
-                "on": 0x31,
-            },
+            TYPE_DATA_DICT: [],
         },
     },
     0xF1: {
@@ -262,7 +271,7 @@ QUIRKS = {
                 #'unknown3-1',
                 #'unknown3-2',
                 #'unknown3-3',
-                #'zone3ProgramOperation',
+                'zone3ProgramOperation',
             ],
         },
     },
@@ -270,15 +279,13 @@ QUIRKS = {
         "EPC_FUNCTION": _0130F2,
         "ENL_OP_CODE": {
             CONF_NAME: "Preferences",
-            TYPE_DATA_DICT: [
-                #'zoneGrouping',
-            ],
+            TYPE_DATA_DICT: [],
         },
     },
     0xFA: {
         "EPC_FUNCTION": _0130FA,
         "ENL_OP_CODE": {
-            CONF_NAME: "Zone Room Tempertures",
+            CONF_NAME: "Zone Room Temperatures",
             CONF_TYPE: SensorDeviceClass.TEMPERATURE,
             CONF_STATE_CLASS: SensorStateClass.MEASUREMENT,
             CONF_ICON: "mdi:thermometer",
