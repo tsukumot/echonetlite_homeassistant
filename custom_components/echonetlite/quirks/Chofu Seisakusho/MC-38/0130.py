@@ -27,20 +27,20 @@ from ....const import (
 from ....sensor import EchonetSensor
 
 
-def _0130F0(edt)
+def _0130F0(edt):
     F01 = F02 = F03 = F04 = None
     try:
-      F01 = _int(edt[0:1])
-      F02 = _int(
-        edt[1:2],
-        {
-            0x30: "off",
-            0x31: "on",
-        },
-      )
-      F03 = _int(edt[2:3])
-      F04 = _int(edt[3:4])
-      except Exception:
+        F01 = _int(edt[0:1])
+        F02 = _int(
+          edt[1:2],
+          {
+              0x30: "off",
+              0x31: "on",
+          },
+        )
+        F03 = _int(edt[2:3])
+        F04 = _int(edt[3:4])
+    except Exception:
         pass
     return {
         "unknown1": F01,
@@ -220,9 +220,9 @@ QUIRKS = {
             CONF_NAME: "Operation mode setting",
             CONF_ICON: "mdi:air-conditioner",
             TYPE_SELECT: {
-                "Cooling": 0x42,
-                "Heating": 0x43,
-                "Dehumidification": 0x44,
+                "cooling": 0x42,
+                "heating": 0x43,
+                "dehumidification": 0x44,
             },
         },
     },

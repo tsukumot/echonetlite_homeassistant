@@ -78,7 +78,7 @@ class KaitekiZoneGroup:
         self._last_sent = {}
         self._last_sent_at = 0.0
 
-        def _base_f1(self, f1=None):
+    def _base_f1(self, f1=None):
         """Return the F1 dict to start a read-modify-write from."""
         if f1 is None:
             f1 = self.coordinator.data.get(0xF1)
@@ -406,7 +406,7 @@ class EchonetKaitekiClimate(EchonetClimate):
         await self.zone_group.async_set_f1(overrides)
 
     async def async_turn_off(self):
-                """Turn off this zone group."""
+        """Turn off this zone group."""
         # With the main power off every zone is already off
         if not _main_power_is_on(self.coordinator):
             return
