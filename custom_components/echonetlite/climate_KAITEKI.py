@@ -1,5 +1,4 @@
 """KAITEKI multi-zone climate entities."""
-
 import logging
 import asyncio
 import time
@@ -12,7 +11,10 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE
-from pychonet.HomeAirConditioner import ENL_HVAC_MODE, ENL_STATUS
+from pychonet.HomeAirConditioner import (
+    ENL_HVAC_MODE,
+    ENL_STATUS,
+)
 from .climate import EchonetClimate
 from .connectors import _host_semaphores
 from .const import DATA_STATE_ON
@@ -31,6 +33,8 @@ ZONE_GROUPINGS = {
     0x33: ((1,), (2, 3)),
     0x34: ((1, 2, 3),),
 }
+# Used when F2 is missing (older firmware) or reports an unknown value.
+DEFAULT_ZONE_GROUPING = 0x30
 STATUS_TO_BYTE = {
     "off": 0x30,
     "on": 0x31,
@@ -47,6 +51,7 @@ PROGRAM_OPERATION_TO_BYTE = {
     "timer2": 0x32,
     "timer3": 0x33,
 }
+AWAY_TO_BYTE = {"off": 0x30, "on": 0x31}
 # Calls arriving within this window are merged into a single F1 frame
 # (e.g. an automation touching several zones at once).
 F1_COALESCE_DELAY = 0.2
@@ -63,6 +68,28 @@ F1_SETTLE_TIME = 5.0
 # the per-host semaphore for minutes (same idea as the Sharp F3 path).
 F1_SET_COMMAND_TIMEOUT = 15
 F1_SET_OVERALL_TIMEOUT = 45
+
+
+async def _read_epc(coordinator, epc):
+    """GET a single EPC and return its decoded value, or None on failure.
+
+    poll_pychonet_specific() cannot be used for EPCs whose decoded value is
+    itself a dict (F1/F0): it would merge that dict into the result as if it
+    were {epc: value}.
+    """
+    for attempt in range(2):
+        try:
+            value = await coordinator._instance.update([epc])
+        except TimeoutError:
+            value = None
+        if value is not None and value is not False:
+            # Tolerate a {epc: value} wrapper as well as a bare value.
+            if isinstance(value, dict) and set(value) == {epc}:
+                value = value[epc]
+            return value
+        if attempt == 0:
+            await asyncio.sleep(0.3)
+    return None
 
 
 class KaitekiZoneGroup:
@@ -109,21 +136,17 @@ class KaitekiZoneGroup:
             if airflow not in AIRFLOW_TO_BYTE:
                 raise HomeAssistantError(f"Unknown zone{zone}AirFlow: {airflow!r}")
             if program not in PROGRAM_OPERATION_TO_BYTE:
-                raise HomeAssistantError(
-                    f"Unknown zone{zone}ProgramOperation: {program!r}"
-                )
+                raise HomeAssistantError(f"Unknown zone{zone}ProgramOperation: {program!r}")
             if temp is None or any(u is None for u in unknowns):
                 raise HomeAssistantError(f"Incomplete F1 data for zone {zone}")
 
-            edt.extend(
-                (
-                    STATUS_TO_BYTE[status],
-                    int(temp),
-                    AIRFLOW_TO_BYTE[airflow],
-                    *unknowns,
-                    PROGRAM_OPERATION_TO_BYTE[program],
-                )
-            )
+            edt.extend((
+                STATUS_TO_BYTE[status],
+                int(temp),
+                AIRFLOW_TO_BYTE[airflow],
+                *unknowns,
+                PROGRAM_OPERATION_TO_BYTE[program],
+            ))
         return bytes(edt), merged  # 21 bytes
 
     async def async_set_f1(self, overrides=None):
@@ -208,10 +231,7 @@ class KaitekiZoneGroup:
 
         # Start from a fresh GET so changes made on the physical controller
         # since the last poll are not reverted for the other zones.
-        try:
-            base = (await coordinator.poll_pychonet_specific([0xF1])).get(0xF1)
-        except TimeoutError:
-            base = None
+        base = await _read_epc(coordinator, 0xF1)
         if not isinstance(base, dict):
             raise HomeAssistantError("KAITEKI F1 could not be read before writing")
 
@@ -244,17 +264,13 @@ class KaitekiZoneGroup:
         seen = False
         for _ in range(F1_READBACK_TRIES):
             await asyncio.sleep(F1_READBACK_DELAY)
-            try:
-                confirmed = await coordinator.poll_pychonet_specific([0xF1])
-            except TimeoutError:
-                continue
-            _LOGGER.debug("KAITEKI F1 readback=%s", confirmed)
-            actual = confirmed.get(0xF1) if confirmed else None
+            actual = await _read_epc(coordinator, 0xF1)
+            _LOGGER.debug("KAITEKI F1 readback=%s", actual)
             if not isinstance(actual, dict):
                 continue
             seen = True
             coordinator.async_set_updated_data(
-                {**(coordinator.data or {}), **confirmed}
+                {**(coordinator.data or {}), 0xF1: actual}
             )
             if all(actual.get(k) == v for k, v in merged.items()):
                 # Device applied everything; no need to trust the cache.
@@ -272,7 +288,9 @@ class KaitekiZoneGroup:
                 coordinator.async_set_updated_data(
                     {**(coordinator.data or {}), 0xF1: base}
                 )
-            raise HomeAssistantError("KAITEKI did not confirm the requested zone settings")
+            raise HomeAssistantError(
+                "KAITEKI did not confirm the requested zone settings"
+            )
 
 
 class EchonetKaitekiClimate(EchonetClimate):
@@ -292,9 +310,11 @@ class EchonetKaitekiClimate(EchonetClimate):
         zone_name = "+".join(str(zone) for zone in self.zones)
         self._attr_name = f"{self._device_name} Zone {zone_name}"
         self._attr_unique_id = self._build_unique_id(f"zone-{zone_name}")
-        # KAITEKI airflow is carried by 0xF1, so FAN_MODE must be enabled
-        # explicitly even when 0xA0 is not in the set map
+
+        # KAITEKI airflow is carried by 0xF1 rather than the standard
+        # ECHONET fan-speed EPC.
         self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
+        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     def _zone_value(self, suffix):
         """Return a value for the first physical zone in this group."""
@@ -302,11 +322,6 @@ class EchonetKaitekiClimate(EchonetClimate):
         if not isinstance(f1, dict):
             return None
         return f1.get(f"zone{self.zones[0]}{suffix}")
-
-    def update_option_listener(self):
-        super().update_option_listener()
-        # KAITEKI airflow comes from 0xF1, not from the standard fan EPC
-        self._attr_fan_modes = list(AIRFLOW_TO_BYTE)
 
     @property
     def current_temperature(self):
@@ -375,7 +390,7 @@ class EchonetKaitekiClimate(EchonetClimate):
     @property
     def extra_state_attributes(self):
         attrs = dict(super().extra_state_attributes or {})
-        attrs["zone_status"] = self._zone_value("Status")  # on / off / keep
+        attrs["zone_status"] = self._zone_value("Status")   # on / off / keep
         attrs["zone_program_operation"] = self.zone_program_operation
         return attrs
 
@@ -436,10 +451,6 @@ def is_kaiteki(coordinator) -> bool:
     )
 
 
-# Used when F2 is missing (older firmware) or reports an unknown value.
-DEFAULT_ZONE_GROUPING = 0x30
-
-
 def get_kaiteki_zones(coordinator):
     """Return the physical zone layout from F2 zoneGrouping, or None.
 
@@ -457,6 +468,7 @@ def get_kaiteki_zones(coordinator):
         )
         grouping = DEFAULT_ZONE_GROUPING
     return ZONE_GROUPINGS[grouping]
+
 
 def get_kaiteki_zone_group(coordinator, zones):
     """Return the zone group shared by all KAITEKI entities of a coordinator."""
@@ -495,9 +507,6 @@ def _main_power_is_on(coordinator) -> bool:
     return coordinator.data.get(ENL_STATUS) in (DATA_STATE_ON, 0x30)
 
 
-AWAY_TO_BYTE = {"off": 0x30, "on": 0x31}
-
-
 async def async_set_away_mode(coordinator, option):
     """Write Away Mode (0xF0, byte 2 of 4) keeping the other bytes intact."""
     if option not in AWAY_TO_BYTE:
@@ -516,10 +525,7 @@ async def _write_away_locked(coordinator, option):
     """Read-modify-write 0xF0. The host semaphore must already be held."""
     # Start from a fresh GET so the unused bytes are never overwritten with
     # stale values.
-    try:
-        base = (await coordinator.poll_pychonet_specific([0xF0])).get(0xF0)
-    except TimeoutError:
-        base = None
+    base = await _read_epc(coordinator, 0xF0)
     if not isinstance(base, dict):
         raise HomeAssistantError("KAITEKI Away Mode could not be read before writing")
 
@@ -550,14 +556,10 @@ async def _write_away_locked(coordinator, option):
     # Read back until the device reports the new value.
     for _ in range(F1_READBACK_TRIES):
         await asyncio.sleep(F1_READBACK_DELAY)
-        try:
-            confirmed = await coordinator.poll_pychonet_specific([0xF0])
-        except TimeoutError:
-            continue
-        actual = confirmed.get(0xF0) if confirmed else None
+        actual = await _read_epc(coordinator, 0xF0)
         if not isinstance(actual, dict):
             continue
-        coordinator.async_set_updated_data({**(coordinator.data or {}), **confirmed})
+        coordinator.async_set_updated_data({**(coordinator.data or {}), 0xF0: actual})
         if actual.get("awayMode") == option:
             return
     _LOGGER.warning(
