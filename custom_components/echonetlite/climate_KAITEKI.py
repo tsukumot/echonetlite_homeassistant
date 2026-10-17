@@ -530,7 +530,7 @@ async def _write_away_locked(coordinator, option):
         raise HomeAssistantError("KAITEKI Away Mode could not be read before writing")
 
     values = [
-        base.get("unknown0"),
+        base.get("unknown1"),
         AWAY_TO_BYTE[option],
         base.get("unknown2"),
         base.get("unknown3"),

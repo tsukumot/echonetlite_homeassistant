@@ -17,7 +17,7 @@ from homeassistant.const import (
     CONF_ICON,
     CONF_SERVICE_DATA,
 )
-from pychonet.lib.epc_functions import _int, _to_string
+from pychonet.lib.epc_functions import _int, _to_string, _signed_int
 from ....const import (
     TYPE_DATA_DICT,
     TYPE_SELECT,
@@ -44,7 +44,7 @@ def _0130F0(edt):
         pass
     return {
         "unknown1": F01,
-        "zone1Status": F02,
+        "awayMode": F02,
         "unknown2": F03,
         "unknown3": F04,
     }
@@ -173,6 +173,25 @@ def _0130F2(edt):
     return {"zoneGrouping": _int(edt[0:1])}
 
 
+# Raw byte this unit reports when a temperature sensor has no valid reading.
+# Seen as 200 when decoded unsigned and -56 when decoded signed.
+_INVALID_TEMP_RAW = 0xC8
+
+
+def _temp_unsigned(edt):
+    """Decode an unsigned temperature byte, returning None for the invalid marker."""
+    if len(edt) < 1 or edt[0] == _INVALID_TEMP_RAW:
+        return None
+    return edt[0]
+
+
+def _temp_signed(edt):
+    """Decode a signed temperature byte, returning None for the invalid marker."""
+    if len(edt) < 1 or edt[0] == _INVALID_TEMP_RAW:
+        return None
+    return _signed_int(edt)
+
+
 def _0130FA(edt):
     t1 = t2 = t3 = ot = u1 = u2 = u3 = None
     try:
@@ -181,7 +200,7 @@ def _0130FA(edt):
         t3 = _int(edt[2:3])
         u1 = _int(edt[3:4])
         u2 = _int(edt[4:5])
-        ot = _int(edt[5:6])
+        ot = _temp_unsigned(edt[5:6])
         u3 = _int(edt[6:7])
     except Exception:
         pass
@@ -237,6 +256,9 @@ QUIRKS = {
                 "High": 0x46,
             },
         },
+    },
+    0xBE: {
+        "EPC_FUNCTION": _temp_signed,
     },
     0xF0: {
         "EPC_FUNCTION": _0130F0,
