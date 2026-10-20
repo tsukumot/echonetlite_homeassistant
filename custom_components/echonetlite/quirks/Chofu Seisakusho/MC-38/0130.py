@@ -6,25 +6,20 @@ from homeassistant.components.sensor.const import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.components.climate.const import (
-    HVACAction,
-    HVACMode,
-    ATTR_HVAC_MODE,
-)
 from homeassistant.const import (
     CONF_NAME,
     CONF_TYPE,
     CONF_ICON,
     CONF_SERVICE_DATA,
 )
-from pychonet.lib.epc_functions import _int, _to_string, _signed_int
+from pychonet.lib.epc_functions import _int, _signed_int
 from ....const import (
     TYPE_DATA_DICT,
     TYPE_SELECT,
     TYPE_SWITCH,
     CONF_DISABLED_DEFAULT,
 )
-from ....sensor import EchonetSensor
+#from ....sensor import EchonetSensor
 
 
 def _0130F0(edt):
@@ -51,6 +46,7 @@ def _0130F0(edt):
 
 
 def _0130F1(edt):
+    # unknowns are kept for future analysis
     z1p = z1t = z1f = u11 = u12 = u13 = z1r = None
     z2p = z2t = z2f = u21 = u22 = u23 = z2r = None
     z3p = z3t = z3f = u31 = u32 = u33 = z3r = None
@@ -193,6 +189,7 @@ def _temp_signed(edt):
 
 
 def _0130FA(edt):
+    # unknowns are kept for future analysis
     t1 = t2 = t3 = ot = u1 = u2 = u3 = None
     try:
         t1 = _int(edt[0:1])
@@ -208,10 +205,10 @@ def _0130FA(edt):
         "zone1Temp": t1,
         "zone2Temp": t2,
         "zone3Temp": t3,
-        # "unknown1": u1,
-        # "unknown2": u2,
+        "unknown1": u1,
+        "unknown2": u2,
         "outsideTemp": ot,
-        # "unknown3": u3,
+        "unknown3": u3,
     }
 
 
@@ -276,24 +273,24 @@ QUIRKS = {
                 "zone1Status",
                 "zone1TargetTemp",
                 "zone1AirFlow",
-                #'unknown1-1',
-                #'unknown1-2',
-                #'unknown1-3',
+                #"unknown1-1",
+                #"unknown1-2",
+                #"unknown1-3",
                 "zone1ProgramOperation",
                 "zone2Status",
                 "zone2TargetTemp",
                 "zone2AirFlow",
-                #'unknown2-1',
-                #'unknown2-2',
-                #'unknown2-3',
+                #"unknown2-1",
+                #"unknown2-2",
+                #"unknown2-3",
                 "zone2ProgramOperation",
                 "zone3Status",
                 "zone3TargetTemp",
                 "zone3AirFlow",
-                #'unknown3-1',
-                #'unknown3-2',
-                #'unknown3-3',
-                'zone3ProgramOperation',
+                #"unknown3-1",
+                #"unknown3-2",
+                #"unknown3-3",
+                "zone3ProgramOperation",
             ],
         },
     },

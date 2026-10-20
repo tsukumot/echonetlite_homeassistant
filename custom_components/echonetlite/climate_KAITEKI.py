@@ -11,10 +11,7 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE
-from pychonet.HomeAirConditioner import (
-    ENL_HVAC_MODE,
-    ENL_STATUS,
-)
+from pychonet.HomeAirConditioner import ENL_STATUS
 from .climate import EchonetClimate
 from .connectors import _host_semaphores
 from .const import DATA_STATE_ON
@@ -477,6 +474,22 @@ def get_kaiteki_zone_group(coordinator, zones):
         group = KaitekiZoneGroup(coordinator, zones)
         coordinator._kaiteki_zone_group = group
     return group
+
+
+def get_kaiteki_hidden_zone_keys(coordinator, keys):
+    """Return the per-zone keys that duplicate a group's representative zone.
+
+    Zones in the same group share one controller, so only the first zone of
+    each group is exposed (matches EchonetKaitekiClimate). Returns an empty
+    set for units that are not KAITEKI.
+    """
+    zones = get_kaiteki_zones(coordinator)
+    if zones is None:
+        return set()
+    prefixes = tuple(f"zone{zone}" for group in zones for zone in group[1:])
+    if not prefixes:
+        return set()
+    return {key for key in keys if key.startswith(prefixes)}
 
 
 def create_kaiteki_climate_entities(coordinator, config):
