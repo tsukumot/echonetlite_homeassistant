@@ -19,7 +19,6 @@ from ....const import (
     TYPE_SWITCH,
     CONF_DISABLED_DEFAULT,
 )
-#from ....sensor import EchonetSensor
 
 
 def _0130F0(edt):

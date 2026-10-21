@@ -257,8 +257,12 @@ class KaitekiZoneGroup:
             {**(coordinator.data or {}), 0xF1: dict(merged)}
         )
 
-        # Read back until the device reports what we wrote.
+        # Read back until the device reports the values we just wrote.
+        # Pass/fail is decided on the overridden keys only: other zones (e.g. a
+        # timer switching a zone on -> keep) or unknown* bytes may legitimately
+        # change within this window and must not fail an unrelated write.
         seen = False
+        confirmed = False
         for _ in range(F1_READBACK_TRIES):
             await asyncio.sleep(F1_READBACK_DELAY)
             actual = await _read_epc(coordinator, 0xF1)
@@ -269,25 +273,33 @@ class KaitekiZoneGroup:
             coordinator.async_set_updated_data(
                 {**(coordinator.data or {}), 0xF1: actual}
             )
+            # Full-frame match: the device applied everything, so the
+            # _last_sent overlay is no longer needed.
             if all(actual.get(k) == v for k, v in merged.items()):
-                # Device applied everything; no need to trust the cache.
                 self._last_sent = {}
+            if all(actual.get(k) == v for k, v in overrides.items()):
+                confirmed = True
                 break
-        else:
-            _LOGGER.warning(
-                "KAITEKI F1 write was acknowledged but not confirmed by read-back "
-                "at %s (expected %s)",
-                coordinator._host,
-                merged,
+
+        if confirmed:
+            return
+
+        # Do not re-send values the device did not apply on the next write.
+        self._last_sent = {}
+        _LOGGER.warning(
+            "KAITEKI F1 write was acknowledged but not confirmed by read-back "
+            "at %s (expected %s)",
+            coordinator._host,
+            overrides,
+        )
+        if not seen:
+            # No real data came back: drop the optimistic state.
+            coordinator.async_set_updated_data(
+                {**(coordinator.data or {}), 0xF1: base}
             )
-            if not seen:
-                # No real data came back: drop the optimistic state.
-                coordinator.async_set_updated_data(
-                    {**(coordinator.data or {}), 0xF1: base}
-                )
-            raise HomeAssistantError(
-                "KAITEKI did not confirm the requested zone settings"
-            )
+        raise HomeAssistantError(
+            "KAITEKI did not confirm the requested zone settings"
+        )
 
 
 class EchonetKaitekiClimate(EchonetClimate):
@@ -460,7 +472,7 @@ def get_kaiteki_zones(coordinator):
     f2 = coordinator.data.get(0xF2)
     grouping = f2.get("zoneGrouping") if isinstance(f2, dict) else None
     if grouping not in ZONE_GROUPINGS:
-        _LOGGER.debug(
+        _LOGGER.warning(
             "KAITEKI zoneGrouping unavailable (%r), using default layout", grouping
         )
         grouping = DEFAULT_ZONE_GROUPING
