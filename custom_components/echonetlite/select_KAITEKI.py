@@ -7,7 +7,9 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .base_entity import EchonetEntity
 from .climate_KAITEKI import (
+    AWAY_TO_BYTE,
     PROGRAM_OPERATION_TO_BYTE,
+    async_set_away_mode,
     get_kaiteki_zone_group,
     get_kaiteki_zones,
     _main_power_is_on,
@@ -54,6 +56,28 @@ class EchonetKaitekiProgramSelect(EchonetEntity, SelectEntity):
         await self.zone_group.async_set_f1(overrides)
 
 
+class EchonetKaitekiAwaySelect(EchonetEntity, SelectEntity):
+    """Select Away Mode (0xF0, 4-byte property) of a KAITEKI unit."""
+
+    _attr_options = list(AWAY_TO_BYTE)
+    _attr_icon = "mdi:walk"
+
+    def __init__(self, coordinator, config):
+        super().__init__(coordinator, config)
+        self._attr_name = f"{self._device_name} Away Mode"
+        # Same unique_id as the former generic select so the entity is kept.
+        self._attr_unique_id = self._build_unique_id(0xF0)
+
+    @property
+    def current_option(self):
+        f0 = self.coordinator.data.get(0xF0)
+        value = f0.get("awayMode") if isinstance(f0, dict) else None
+        return value if value in AWAY_TO_BYTE else None
+
+    async def async_select_option(self, option: str) -> None:
+        await async_set_away_mode(self.coordinator, option)
+
+
 def create_kaiteki_select_entities(coordinator, config):
     """Create KAITEKI select entities from F2 zoneGrouping.
 
@@ -64,7 +88,10 @@ def create_kaiteki_select_entities(coordinator, config):
         return []
 
     zone_group = get_kaiteki_zone_group(coordinator, zones)
-    return [
+    entities = [
         EchonetKaitekiProgramSelect(coordinator, config, physical_zones, zone_group)
         for physical_zones in zones
     ]
+    if 0xF0 in coordinator._setPropertyMap:
+        entities.append(EchonetKaitekiAwaySelect(coordinator, config))
+    return entities
