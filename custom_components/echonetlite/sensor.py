@@ -319,7 +319,6 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                         hidden_keys = get_kaiteki_hidden_zone_keys(
                             entity["echonetlite"], type_data
                         )
-                        _LOGGER.warning("KAITEKI hidden keys: %s", hidden_keys)
                         for attr_key in type_data:
                             base_attrs = _enl_op_codes.get(op_code)
                             # Apply override if defined for this specific dict key
