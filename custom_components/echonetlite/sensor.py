@@ -320,8 +320,6 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                             entity["echonetlite"], type_data
                         )
                         for attr_key in type_data:
-                            if attr_key in hidden_keys:
-                                continue
                             base_attrs = _enl_op_codes.get(op_code)
                             # Apply override if defined for this specific dict key
                             if attr_key in dict_overrides:
@@ -340,6 +338,10 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                                     entity_attrs,
                                 )
                             )
+                                              # Non-representative zones of a group stay available
+                            # but disabled by default (their readings may differ).
+                            if attr_key in hidden_keys:
+                                entity_attrs = entity_attrs | {CONF_DISABLED_DEFAULT: True}
                         continue
                     else:
                         continue
