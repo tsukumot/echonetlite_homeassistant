@@ -319,6 +319,7 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                         hidden_keys = get_kaiteki_hidden_zone_keys(
                             entity["echonetlite"], type_data
                         )
+                        _LOGGER.warning("KAITEKI hidden keys: %s", hidden_keys)
                         for attr_key in type_data:
                             base_attrs = _enl_op_codes.get(op_code)
                             # Apply override if defined for this specific dict key
@@ -330,6 +331,10 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                                 )
                             else:
                                 entity_attrs = base_attrs | {"dict_key": attr_key}
+                            # Non-representative zones of a group stay available
+                            # but disabled by default (their readings may differ).
+                            if attr_key in hidden_keys:
+                                entity_attrs = entity_attrs | {CONF_DISABLED_DEFAULT: True}
                             entities.append(
                                 EchonetSensor(
                                     entity["echonetlite"],
@@ -338,10 +343,6 @@ async def async_setup_entry(hass, config, async_add_entities, discovery_info=Non
                                     entity_attrs,
                                 )
                             )
-                                              # Non-representative zones of a group stay available
-                            # but disabled by default (their readings may differ).
-                            if attr_key in hidden_keys:
-                                entity_attrs = entity_attrs | {CONF_DISABLED_DEFAULT: True}
                         continue
                     else:
                         continue
