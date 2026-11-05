@@ -333,15 +333,15 @@ class EchonetKaitekiClimate(EchonetClimate):
         return f1.get(f"zone{self.zones[0]}{suffix}")
 
     @property
-    def current_temperature(self):
+    def native_current_temperature(self):
         """Return the room temperature for the representative zone."""
         fa = self.coordinator.data.get(0xFA)
         if not isinstance(fa, dict):
-            return super().current_temperature
+            return super().native_current_temperature
         return fa.get(f"zone{self.zones[0]}Temp")
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         """Return the target temperature for this zone group."""
         return self._zone_value("TargetTemp")
 

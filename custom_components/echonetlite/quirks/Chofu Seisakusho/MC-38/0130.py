@@ -20,20 +20,35 @@ from ....const import (
     CONF_DISABLED_DEFAULT,
 )
 
+DICT_30_OFF_ON = {0x30: "off", 0x31: "on"}
+_ZONE_STATUS = {
+    0x30: "off",
+    0x31: "on",
+    0x32: "keep",
+}
+_ZONE_AIRFLOW = {
+    0x31: "low",
+    0x32: "high",
+    0x41: "auto",
+}
+_ZONE_PROGRAM = {
+    0x30: "off",
+    0x31: "timer1",
+    0x32: "timer2",
+    0x33: "timer3",
+}
+# EDT layout of 0xF1: 3 zones x 7 bytes (21 bytes in total).
+_F1_ZONE_COUNT = 3
+_F1_ZONE_SIZE = 7
+
 
 def _0130F0(edt):
     F01 = F02 = F03 = F04 = None
     try:
-        F01 = _int(edt[0:1])
-        F02 = _int(
-          edt[1:2],
-          {
-              0x30: "off",
-              0x31: "on",
-          },
-        )
-        F03 = _int(edt[2:3])
-        F04 = _int(edt[3:4])
+        F01 = _int(edt[0:1], DICT_30_ON_OFF)
+        F02 = _int(edt[1:2], DICT_30_ON_OFF)
+        F03 = _int(edt[2:3], DICT_30_ON_OFF)
+        F04 = _int(edt[3:4], DICT_30_ON_OFF)
     except Exception:
         pass
     return {
@@ -46,122 +61,42 @@ def _0130F0(edt):
 
 def _0130F1(edt):
     # unknowns are kept for future analysis
-    z1p = z1t = z1f = u11 = u12 = u13 = z1r = None
-    z2p = z2t = z2f = u21 = u22 = u23 = z2r = None
-    z3p = z3t = z3f = u31 = u32 = u33 = z3r = None
-    try:
-        z1p = _int(
-            edt[0:1],
-            {
-                0x30: "off",
-                0x31: "on",
-                0x32: "keep",
-            },
-        )
-        z1t = _int(edt[1:2])
-        z1f = _int(
-            edt[2:3],
-            {
-                0x31: "low",
-                0x32: "high",
-                0x41: "auto",
-            },
-        )
-        u11 = _int(edt[3:4])
-        u12 = _int(edt[4:5])
-        u13 = _int(edt[5:6])
-        z1r = _int(
-            edt[6:7],
-            {
-                0x30: "off",
-                0x31: "timer1",
-                0x32: "timer2",
-                0x33: "timer3",
-            },
-        )
-        z2p = _int(
-            edt[7:8],
-            {
-                0x30: "off",
-                0x31: "on",
-                0x32: "keep",
-            },
-        )
-        z2t = _int(edt[8:9])
-        z2f = _int(
-            edt[9:10],
-            {
-                0x31: "low",
-                0x32: "high",
-                0x41: "auto",
-            },
-        )
-        u21 = _int(edt[10:11])
-        u22 = _int(edt[11:12])
-        u23 = _int(edt[12:13])
-        z2r = _int(
-            edt[13:14],
-            {
-                0x30: "off",
-                0x31: "timer1",
-                0x32: "timer2",
-                0x33: "timer3",
-            },
-        )
-        z3p = _int(
-            edt[14:15],
-            {
-                0x30: "off",
-                0x31: "on",
-                0x32: "keep",
-            },
-        )
-        z3t = _int(edt[15:16])
-        z3f = _int(
-            edt[16:17],
-            {
-                0x31: "low",
-                0x32: "high",
-                0x41: "auto",
-            },
-        )
-        u31 = _int(edt[17:18])
-        u32 = _int(edt[18:19])
-        u33 = _int(edt[19:20])
-        z3r = _int(
-            edt[20:21],
-            {
-                0x30: "off",
-                0x31: "timer1",
-                0x32: "timer2",
-                0x33: "timer3",
-            },
-        )
-    except Exception:
-        pass
-    return {
-        "zone1Status": z1p,
-        "zone1TargetTemp": z1t,
-        "zone1AirFlow": z1f,
-        "unknown1-1": u11,
-        "unknown1-2": u12,
-        "unknown1-3": u13,
-        "zone1ProgramOperation": z1r,
-        "zone2Status": z2p,
-        "zone2TargetTemp": z2t,
-        "zone2AirFlow": z2f,
-        "unknown2-1": u21,
-        "unknown2-2": u22,
-        "unknown2-3": u23,
-        "zone2ProgramOperation": z2r,
-        "zone3Status": z3p,
-        "zone3TargetTemp": z3t,
-        "zone3AirFlow": z3f,
-        "unknown3-1": u31,
-        "unknown3-2": u32,
-        "unknown3-3": u33,
-        "zone3ProgramOperation": z3r,
-    }
+    result = {}
+    for zone in range(1, _F1_ZONE_COUNT + 1):
+        base = (zone - 1) * _F1_ZONE_SIZE
+        # Every key defaults to None so a short or broken frame
+        # still yields the full key set (same as the previous behaviour).
+        values = {
+            f"zone{zone}Status": None,
+            f"zone{zone}TargetTemp": None,
+            f"zone{zone}AirFlow": None,
+            f"unknown{zone}-1": None,
+            f"unknown{zone}-2": None,
+            f"unknown{zone}-3": None,
+            f"zone{zone}ProgramOperation": None,
+        }
+        try:
+            # Offsets within a zone block: 0=status, 1=target temp, 2=airflow,
+            # 3-5=unknown, 6=program operation.
+            values[f"zone{zone}Status"] = _int(
+                edt[base : base + 1], _ZONE_STATUS
+            )
+            values[f"zone{zone}TargetTemp"] = _int(edt[base + 1 : base + 2])
+            values[f"zone{zone}AirFlow"] = _int(
+                edt[base + 2 : base + 3], _ZONE_AIRFLOW
+            )
+            for i in range(1, 4):
+                values[f"unknown{zone}-{i}"] = _int(
+                    edt[base + 2 + i : base + 3 + i]
+                )
+            values[f"zone{zone}ProgramOperation"] = _int(
+                edt[base + 6 : base + 7], _ZONE_PROGRAM
+            )
+        except Exception:
+            # Keep whatever was decoded before the failure, as before.
+            pass
+        result.update(values)
+    return result
 
 
 def _0130F2(edt):
@@ -269,27 +204,27 @@ QUIRKS = {
         "ENL_OP_CODE": {
             CONF_NAME: "Zone Configuration",
             TYPE_DATA_DICT: [
-                "zone1Status",
-                "zone1TargetTemp",
-                "zone1AirFlow",
-                #"unknown1-1",
-                #"unknown1-2",
-                #"unknown1-3",
-                "zone1ProgramOperation",
-                "zone2Status",
-                "zone2TargetTemp",
-                "zone2AirFlow",
-                #"unknown2-1",
-                #"unknown2-2",
-                #"unknown2-3",
-                "zone2ProgramOperation",
-                "zone3Status",
-                "zone3TargetTemp",
-                "zone3AirFlow",
-                #"unknown3-1",
-                #"unknown3-2",
-                #"unknown3-3",
-                "zone3ProgramOperation",
+                # "zone1Status",
+                # "zone1TargetTemp",
+                # "zone1AirFlow",
+                "unknown1-1",
+                "unknown1-2",
+                "unknown1-3",
+                # "zone1ProgramOperation",
+                # "zone2Status",
+                # "zone2TargetTemp",
+                # "zone2AirFlow",
+                "unknown2-1",
+                "unknown2-2",
+                "unknown2-3",
+                # "zone2ProgramOperation",
+                # "zone3Status",
+                # "zone3TargetTemp",
+                # "zone3AirFlow",
+                "unknown3-1",
+                "unknown3-2",
+                "unknown3-3",
+                # "zone3ProgramOperation",
             ],
         },
     },
@@ -311,10 +246,10 @@ QUIRKS = {
                 "zone1Temp",
                 "zone2Temp",
                 "zone3Temp",
-                # "unknown1",
-                # "unknown2",
+                "unknown1",
+                "unknown2",
                 "outsideTemp",
-                # "unknown3",
+                "unknown3",
             ],
         },
     },
