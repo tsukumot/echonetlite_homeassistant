@@ -45,10 +45,10 @@ _F1_ZONE_SIZE = 7
 def _0130F0(edt):
     F01 = F02 = F03 = F04 = None
     try:
-        F01 = _int(edt[0:1], DICT_30_ON_OFF)
-        F02 = _int(edt[1:2], DICT_30_ON_OFF)
-        F03 = _int(edt[2:3], DICT_30_ON_OFF)
-        F04 = _int(edt[3:4], DICT_30_ON_OFF)
+        F01 = _int(edt[0:1], DICT_30_OFF_ON)
+        F02 = _int(edt[1:2], DICT_30_OFF_ON)
+        F03 = _int(edt[2:3], DICT_30_OFF_ON)
+        F04 = _int(edt[3:4], DICT_30_OFF_ON)
     except Exception:
         pass
     return {
